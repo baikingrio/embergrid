@@ -1,6 +1,7 @@
 import {
   createWalletClient,
   formatEther,
+  parseEventLogs,
   zeroAddress,
   type Address,
   type Hex,
@@ -54,6 +55,7 @@ export function usePaintSession() {
   const batchQuoting = shallowRef(false)
   const confirmedBatch = ref<{ ids: number[], prices: bigint[], color: number, total: bigint } | null>(null)
   const pendingPaints = ref<{ id: number, color: number }[]>([])
+  const settleResult = ref<{ winner: Address, credit: bigint, rollover: bigint } | null>(null)
   let batchTicket = 0
 
   const heldByMe = computed(() => {
@@ -318,6 +320,7 @@ export function usePaintSession() {
         throw new Error('交易失败')
       }
       await fetchQuote()
+      settleResult.value = null
       status.value = 'confirmed'
       message.value = '已在链上确认'
       clearConfirmation()
@@ -378,6 +381,7 @@ export function usePaintSession() {
       if (receipt.status !== 'success') throw new Error('批量交易失败')
       clearBatch()
       clearPending()
+      settleResult.value = null
       await fetchQuote()
       status.value = 'confirmed'
       message.value = `批量已在链上确认，共 ${ids.length} 格`
@@ -410,8 +414,17 @@ export function usePaintSession() {
       txHash.value = hash
       const receipt = await publicClient.waitForTransactionReceipt({ hash })
       if (receipt.status !== 'success') throw new Error('结算失败')
+      const settled = parseEventLogs({
+        abi: embergridAbi,
+        logs: receipt.logs,
+        eventName: 'RoundSettled',
+      })[0]
+      const winnerCredit = settled?.args.winnerCredit ?? credit
+      const rollover = settled?.args.rollover ?? pool - credit
+      const winner = settled?.args.winner ?? zeroAddress
+      settleResult.value = { winner, credit: winnerCredit, rollover }
       status.value = 'confirmed'
-      message.value = `结算完成。${formatEther(credit)} MON 已记入最后争夺者的可领取余额，余款留在奖池。可以开启下一轮。`
+      message.value = '结算完成。可以开启下一轮。'
     } catch (error) {
       status.value = 'failed'
       message.value = explain(error, '结算失败')
@@ -440,6 +453,7 @@ export function usePaintSession() {
     batchIncludesMine,
     batchReady,
     pendingPaints,
+    settleResult,
     fetchQuote,
     confirmQuote,
     toggleBatch,

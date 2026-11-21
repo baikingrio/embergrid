@@ -160,6 +160,13 @@ function short(address: string) {
               @change="onPixelInput"
             >
           </label>
+          <div v-if="paint.settleResult.value" class="mt-3 space-y-2 rounded border border-emerald-300 bg-emerald-50 p-3">
+            <p class="font-semibold text-emerald-950">本轮已结算</p>
+            <p>获胜者：{{ short(paint.settleResult.value.winner) }}</p>
+            <p>已记入可领取余额：{{ paint.formatEther(paint.settleResult.value.credit) }} MON（80%）</p>
+            <p>滚存：{{ paint.formatEther(paint.settleResult.value.rollover) }} MON（20%）</p>
+            <p>可以开启下一轮。</p>
+          </div>
           <div v-if="grid.awaitingSettle.value" class="mt-3 space-y-2 rounded border border-amber-300 bg-amber-50 p-3">
             <p class="font-semibold text-amber-900">等待链上结算</p>
             <p>预计获胜者：{{ lastPainterLabel }}</p>
