@@ -59,6 +59,18 @@ export function samePixelIds(left: readonly number[], right: readonly number[]) 
   return left.length === right.length && left.every((id, index) => id === right[index])
 }
 
+export function staleBatchIds(
+  ids: readonly number[],
+  cachedAt: ReadonlyMap<number, number>,
+  now: number,
+  ttlMs: number,
+) {
+  return ids.filter((id) => {
+    const at = cachedAt.get(id)
+    return at === undefined || now - at >= ttlMs
+  })
+}
+
 export function batchPricesMatch(confirmed: readonly bigint[], fresh: readonly bigint[]) {
   return confirmed.length === fresh.length
     && confirmed.every((price, index) => price === fresh[index])

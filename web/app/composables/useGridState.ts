@@ -1,5 +1,6 @@
 import { formatEther, zeroAddress, type Address, type Hex } from 'viem'
 import { EMBERGRID_ADDRESS, MONAD_TESTNET_EXPLORER, createMonadPublicClient } from '@embergrid/shared'
+import { mergeCanvasSnapshot, type CanvasSnapshot } from '~/lib/canvasSnapshot'
 import { embergridAbi } from '~/lib/embergridAbi'
 import { createGridSyncController } from '~/lib/gridSync'
 
@@ -32,33 +33,62 @@ export function useGridState() {
   const loading = ref(true)
   const synced = ref(false)
   const loadError = ref<string | null>(null)
+  const canvasBlock = ref('0')
+  const canvasUpdatedAt = ref(0)
+  const pins = new Map<number, number>()
+  let accountFlight: Promise<void> | null = null
+  let accountFlightAddress = ''
 
   function bump() {
     revision.value += 1
   }
 
-  async function syncCanvas() {
-    const nextColors = new Uint8Array(PIXEL_COUNT)
-    const nextOwned = new Uint8Array(PIXEL_COUNT)
-    const pages = await Promise.all(Array.from({ length: PIXEL_COUNT / PAGE }, (_, page) => {
-      const start = page * PAGE
-      return publicClient.readContract({
-        address: EMBERGRID_ADDRESS,
-        abi: embergridAbi,
-        functionName: 'getPixels',
-        args: [BigInt(start), BigInt(PAGE)],
-      }).then((result) => ({ start, result }))
-    }))
+  async function readCanvasFromChain(): Promise<CanvasSnapshot> {
+    const [blockNumber, pages] = await Promise.all([
+      publicClient.getBlockNumber(),
+      Promise.all(Array.from({ length: PIXEL_COUNT / PAGE }, (_, page) => {
+        const start = page * PAGE
+        return publicClient.readContract({
+          address: EMBERGRID_ADDRESS,
+          abi: embergridAbi,
+          functionName: 'getPixels',
+          args: [BigInt(start), BigInt(PAGE)],
+        }).then((result) => ({ start, result }))
+      })),
+    ])
+    const snapshotColors = Array<number>(PIXEL_COUNT).fill(0)
+    const snapshotOwned = Array<number>(PIXEL_COUNT).fill(0)
     for (const { start, result } of pages) {
       const [owners, , pageColors] = result
-      for (let i = 0; i < PAGE; i++) {
-        nextColors[start + i] = pageColors[i] ?? 0
-        nextOwned[start + i] = owners[i] && owners[i] !== zeroAddress ? 1 : 0
+      for (let index = 0; index < PAGE; index += 1) {
+        snapshotColors[start + index] = pageColors[index] ?? 0
+        snapshotOwned[start + index] = owners[index] && owners[index] !== zeroAddress ? 1 : 0
       }
     }
-    colors.value = nextColors
-    owned.value = nextOwned
+    return {
+      blockNumber: blockNumber.toString(),
+      updatedAt: Date.now(),
+      colors: snapshotColors,
+      owned: snapshotOwned,
+    }
+  }
+
+  function showSnapshot(snapshot: CanvasSnapshot) {
+    const merged = mergeCanvasSnapshot(snapshot, pins)
+    for (const id of merged.released) pins.delete(id)
+    colors.value = merged.colors
+    owned.value = merged.owned
+    canvasBlock.value = snapshot.blockNumber
+    canvasUpdatedAt.value = snapshot.updatedAt
     bump()
+  }
+
+  async function syncCanvas() {
+    try {
+      showSnapshot(await $fetch<CanvasSnapshot>('/api/canvas'))
+    } catch {
+      showSnapshot(await readCanvasFromChain())
+    }
   }
 
   async function syncRound() {
@@ -89,17 +119,27 @@ export function useGridState() {
   async function syncAccount() {
     const address = account.value?.address
     if (!address) return
-    const [native, credit] = await Promise.all([
-      publicClient.getBalance({ address }),
-      publicClient.readContract({
-        address: EMBERGRID_ADDRESS,
-        abi: embergridAbi,
-        functionName: 'pendingWithdrawals',
-        args: [address],
-      }),
-    ])
-    balance.value = native
-    pending.value = credit
+    if (accountFlight && accountFlightAddress === address) return accountFlight
+    accountFlightAddress = address
+    accountFlight = (async () => {
+      try {
+        const [native, credit] = await Promise.all([
+          publicClient.getBalance({ address }),
+          publicClient.readContract({
+            address: EMBERGRID_ADDRESS,
+            abi: embergridAbi,
+            functionName: 'pendingWithdrawals',
+            args: [address],
+          }),
+        ])
+        if (account.value?.address !== address) return
+        balance.value = native
+        pending.value = credit
+      } finally {
+        accountFlight = null
+      }
+    })()
+    return accountFlight
   }
 
   async function syncTrades() {
@@ -134,6 +174,7 @@ export function useGridState() {
   }
 
   function applyPaint(pixelId: number, color: number) {
+    pins.set(pixelId, color)
     const nextColors = new Uint8Array(colors.value)
     const nextOwned = new Uint8Array(owned.value)
     nextColors[pixelId] = color
@@ -147,7 +188,15 @@ export function useGridState() {
   let poll = 0
   let canvasPoll = 0
 
-  function installWatchers() {
+  function stopPolling() {
+    if (poll) window.clearInterval(poll)
+    if (canvasPoll) window.clearInterval(canvasPoll)
+    poll = 0
+    canvasPoll = 0
+  }
+
+  function watchPaints() {
+    stopWatch?.()
     stopWatch = publicClient.watchContractEvent({
       address: EMBERGRID_ADDRESS,
       abi: embergridAbi,
@@ -173,12 +222,37 @@ export function useGridState() {
         void syncRound().catch(() => {})
       },
     })
+  }
+
+  function startPolling() {
+    stopPolling()
+    stopWatch?.()
+    stopWatch = undefined
+    if (document.hidden) return
+    watchPaints()
+    const jitter = Math.floor(Math.random() * 2_000)
     poll = window.setInterval(() => {
       void syncRound().then(() => syncAccount()).catch(() => {})
-    }, 15_000)
+    }, 15_000 + jitter)
     canvasPoll = window.setInterval(() => {
       void syncCanvas().catch(() => {})
-    }, 60_000)
+    }, 60_000 + jitter)
+  }
+
+  function onVisibility() {
+    if (document.hidden) {
+      stopWatch?.()
+      stopWatch = undefined
+      stopPolling()
+      return
+    }
+    void sync().catch(() => {})
+    startPolling()
+  }
+
+  function installWatchers() {
+    document.addEventListener('visibilitychange', onVisibility)
+    startPolling()
   }
 
   const session = createGridSyncController({
@@ -204,9 +278,9 @@ export function useGridState() {
 
   onScopeDispose(() => {
     session.dispose()
+    document.removeEventListener('visibilitychange', onVisibility)
     stopWatch?.()
-    if (poll) window.clearInterval(poll)
-    if (canvasPoll) window.clearInterval(canvasPoll)
+    stopPolling()
   })
 
   watch(() => account.value?.address, () => {
@@ -240,6 +314,8 @@ export function useGridState() {
     loading,
     synced,
     loadError,
+    canvasBlock,
+    canvasUpdatedAt,
     sync,
     retry: session.retry,
     syncAccount,

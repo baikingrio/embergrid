@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { addBatchIds, batchPricesMatch, pixelsOnLine, samePixelIds, toggleBatchId } from '../app/lib/batchSelection.ts'
+import { addBatchIds, batchPricesMatch, pixelsOnLine, samePixelIds, staleBatchIds, toggleBatchId } from '../app/lib/batchSelection.ts'
 
 test('toggle adds, removes, and stops at 64', () => {
   const added = toggleBatchId([], 2)
@@ -29,6 +29,12 @@ test('a stroke adds new pixels, keeps ones already selected, and stops at 64', (
   const overflow = addBatchIds(full, [64, 65])
   assert.deepEqual(overflow.ids, full)
   assert.equal(overflow.capped, true)
+})
+
+test('batch quotes refresh only missing or expired pixels', () => {
+  const cachedAt = new Map([[1, 1_000], [2, 1_000]])
+  assert.deepEqual(staleBatchIds([1, 2, 3], cachedAt, 5_000, 20_000), [3])
+  assert.deepEqual(staleBatchIds([1, 2], cachedAt, 21_000, 20_000), [1, 2])
 })
 
 test('a drag line does not skip pixels between the samples', () => {

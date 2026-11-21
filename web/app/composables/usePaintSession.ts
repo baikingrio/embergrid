@@ -7,7 +7,7 @@ import {
   type Hex,
 } from 'viem'
 import { EMBERGRID_ADDRESS, createMonadPublicClient, monadTestnet, monadTransport } from '@embergrid/shared'
-import { addBatchIds as includeBatchIds, batchPricesMatch, samePixelIds, toggleBatchId } from '~/lib/batchSelection'
+import { addBatchIds as includeBatchIds, batchPricesMatch, samePixelIds, staleBatchIds, toggleBatchId } from '~/lib/batchSelection'
 import { embergridAbi } from '~/lib/embergridAbi'
 import { createQuoteRequests } from '~/lib/quoteRequests'
 
@@ -56,6 +56,8 @@ export function usePaintSession() {
   const confirmedBatch = ref<{ ids: number[], prices: bigint[], color: number, total: bigint } | null>(null)
   const pendingPaints = ref<{ id: number, color: number }[]>([])
   const settleResult = ref<{ winner: Address, credit: bigint, rollover: bigint } | null>(null)
+  const batchQuoteCache = new Map<number, { quote: PaintQuote, at: number }>()
+  const batchQuoteTtlMs = 20_000
   let batchTicket = 0
 
   const heldByMe = computed(() => {
@@ -171,6 +173,13 @@ export function usePaintSession() {
     confirmedBatch.value = null
   }
 
+  watch(color, (next) => {
+    clearConfirmation()
+    clearBatchConfirmation()
+    if (quote.value) quote.value = { ...quote.value, color: next }
+    batchQuotes.value = batchQuotes.value.map((item) => ({ ...item, color: next }))
+  })
+
   function toggleBatch(id: number) {
     const next = toggleBatchId(batchIds.value, id)
     if (next.error) {
@@ -200,26 +209,50 @@ export function usePaintSession() {
     batchQuoting.value = false
   }
 
+  function rememberBatchQuote(id: number, quoteForPixel: PaintQuote, at: number) {
+    batchQuoteCache.set(id, { quote: quoteForPixel, at })
+  }
+
+  function cachedBatchQuotes(ids: number[], now: number) {
+    const cachedAt = new Map([...batchQuoteCache].map(([id, entry]) => [id, entry.at]))
+    const missing = staleBatchIds(ids, cachedAt, now, batchQuoteTtlMs)
+    const quotesForIds = ids.flatMap((id) => {
+      if (missing.includes(id)) return []
+      const hit = batchQuoteCache.get(id)
+      return hit ? [{ ...hit.quote, color: color.value }] : []
+    })
+    return { missing, quotesForIds }
+  }
+
   async function fetchBatchQuotes() {
     const ids = [...batchIds.value]
     const ticket = ++batchTicket
-    batchQuotes.value = []
     clearBatchConfirmation()
     if (ids.length === 0) {
+      batchQuotes.value = []
       batchQuoting.value = false
       return
     }
+    const now = Date.now()
+    const { missing, quotesForIds } = cachedBatchQuotes(ids, now)
+    if (missing.length === 0) {
+      batchQuotes.value = quotesForIds
+      batchQuoting.value = false
+      message.value = `已读取 ${ids.length} 格报价，确认后一次提交`
+      return
+    }
+    batchQuotes.value = quotesForIds
     batchQuoting.value = true
     try {
-      const priced = await Promise.all(ids.map((id) => readQuote(id)))
+      const priced = await Promise.all(missing.map((id) => readQuote(id)))
       if (ticket !== batchTicket || !samePixelIds(ids, batchIds.value)) return
-      batchQuotes.value = priced.map((item, index) => toQuote(
-        ids[index] ?? 0,
-        item.owner,
-        item.nextPrice,
-        item.previousCredit,
-        color.value,
-      ))
+      const stamped = Date.now()
+      missing.forEach((id, index) => {
+        const item = priced[index]
+        if (!item) return
+        rememberBatchQuote(id, toQuote(id, item.owner, item.nextPrice, item.previousCredit, color.value), stamped)
+      })
+      batchQuotes.value = cachedBatchQuotes(ids, stamped).quotesForIds
       message.value = `已读取 ${ids.length} 格报价，确认后一次提交`
     } catch (error) {
       if (ticket !== batchTicket) return
