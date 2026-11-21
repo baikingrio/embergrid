@@ -19,6 +19,7 @@ onUnmounted(() => {
 })
 
 const countdown = computed(() => {
+  if (!grid.synced.value) return '未同步'
   if (!grid.endTime.value) return '等待首笔'
   const seconds = Math.max(0, grid.endTime.value - Math.floor(now.value / 1000))
   const minutes = Math.floor(seconds / 60)
@@ -27,6 +28,7 @@ const countdown = computed(() => {
 })
 
 const lastPainterLabel = computed(() => {
+  if (!grid.synced.value) return '未同步'
   const painter = grid.lastPainter.value
   if (!painter || painter === zeroAddress) return '尚无'
   return `${painter.slice(0, 6)}…${painter.slice(-4)}`
@@ -47,6 +49,10 @@ watch(() => paint.status.value, (status) => {
   if (status === 'confirmed') void grid.sync()
 })
 
+watch(() => grid.synced.value, (synced) => {
+  if (synced) void paint.fetchQuote()
+})
+
 function short(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`
 }
@@ -62,7 +68,7 @@ function short(address: string) {
       </div>
       <div>
         <p class="text-xs text-stone-500">奖池</p>
-        <p class="font-mono text-lg">{{ grid.formatEther(grid.prizePool.value) }} MON</p>
+        <p class="font-mono text-lg">{{ grid.synced.value ? `${grid.formatEther(grid.prizePool.value)} MON` : '未同步' }}</p>
       </div>
       <div>
         <p class="text-xs text-stone-500">最后争夺者</p>
@@ -75,6 +81,12 @@ function short(address: string) {
       </div>
     </header>
 
+    <section v-if="grid.loadError.value" class="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-950">
+      <p>连接测试网失败。{{ grid.loadError.value }} 默认的 0 不是链上结果。</p>
+      <button class="mt-3 rounded bg-red-800 px-3 py-1.5 text-white" type="button" @click="grid.retry()">
+        重试
+      </button>
+    </section>
     <section v-if="wallet.ready.value && !wallet.acknowledged.value" class="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
       <p>这是保存在本机浏览器里的演示钱包。清除浏览器数据后将无法再访问该地址里的测试币。</p>
       <button class="mt-3 rounded bg-amber-800 px-3 py-1.5 text-white" type="button" @click="wallet.acknowledge()">
@@ -140,17 +152,18 @@ function short(address: string) {
             </button>
           </div>
           <p v-if="grid.loading.value" class="text-stone-500">正在读取画布…</p>
-          <template v-else-if="paint.quote.value">
+          <p v-else-if="!grid.synced.value" class="text-red-700">画布尚未同步</p>
+          <template v-else-if="paint.quote.value && paint.quote.value.pixelId === paint.pixelId.value">
             <p>下一口价：{{ paint.formatEther(paint.quote.value.nextPrice) }} MON</p>
             <p>前任预计回款：{{ paint.formatEther(paint.quote.value.previousCredit) }} MON</p>
             <p>奖池增量：{{ paint.formatEther(paint.quote.value.poolDelta) }} MON</p>
             <p v-if="paint.quote.value.owner === zeroAddress">首次购买，支付金额全部进入奖池</p>
             <p v-if="paint.heldByMe.value" class="font-semibold text-amber-800">你已持有</p>
             <div v-if="!grid.awaitingSettle.value" class="mt-3 flex gap-2">
-              <button class="rounded border px-3 py-1.5 disabled:opacity-40" type="button" :disabled="paint.heldByMe.value || paint.inflight.value" @click="paint.confirmQuote()">
+              <button class="rounded border px-3 py-1.5 disabled:opacity-40" type="button" :disabled="paint.quoting.value || paint.heldByMe.value || paint.inflight.value" @click="paint.confirmQuote()">
                 确认金额
               </button>
-              <button class="rounded bg-orange-700 px-3 py-1.5 text-white disabled:opacity-40" type="button" :disabled="paint.confirmedPrice.value === null || paint.heldByMe.value || paint.inflight.value" @click="paint.sendPaint()">
+              <button class="rounded bg-orange-700 px-3 py-1.5 text-white disabled:opacity-40" type="button" :disabled="paint.quoting.value || paint.confirmedPrice.value === null || paint.confirmedPixelId.value !== paint.pixelId.value || paint.heldByMe.value || paint.inflight.value" @click="paint.sendPaint()">
                 {{ paint.inflight.value ? '等待回执…' : '购买' }}
               </button>
             </div>

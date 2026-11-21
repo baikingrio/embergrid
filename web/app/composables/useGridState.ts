@@ -1,6 +1,7 @@
 import { formatEther, zeroAddress, type Address, type Hex } from 'viem'
 import { EMBERGRID_ADDRESS, MONAD_TESTNET_EXPLORER, createMonadPublicClient } from '@embergrid/shared'
 import { embergridAbi } from '~/lib/embergridAbi'
+import { createGridSyncController } from '~/lib/gridSync'
 
 export type TradeRow = {
   hash: Hex
@@ -29,6 +30,8 @@ export function useGridState() {
   const pending = ref(0n)
   const trades = ref<TradeRow[]>([])
   const loading = ref(true)
+  const synced = ref(false)
+  const loadError = ref<string | null>(null)
 
   function bump() {
     revision.value += 1
@@ -128,7 +131,6 @@ export function useGridState() {
       syncAccount(),
       syncTrades().catch(() => {}),
     ])
-    loading.value = false
   }
 
   function applyPaint(pixelId: number, color: number) {
@@ -145,8 +147,7 @@ export function useGridState() {
   let poll = 0
   let canvasPoll = 0
 
-  onMounted(async () => {
-    await sync()
+  function installWatchers() {
     stopWatch = publicClient.watchContractEvent({
       address: EMBERGRID_ADDRESS,
       abi: embergridAbi,
@@ -169,7 +170,7 @@ export function useGridState() {
             ].slice(0, 12)
           }
         }
-        void syncRound()
+        void syncRound().catch(() => {})
       },
     })
     poll = window.setInterval(() => {
@@ -178,9 +179,31 @@ export function useGridState() {
     canvasPoll = window.setInterval(() => {
       void syncCanvas().catch(() => {})
     }, 60_000)
+  }
+
+  const session = createGridSyncController({
+    sync,
+    installWatchers,
+    schedule(fn, ms) {
+      const id = window.setTimeout(fn, ms)
+      return { cancel() { window.clearTimeout(id) } }
+    },
+  })
+
+  function pullSession() {
+    const snap = session.snapshot()
+    loading.value = snap.loading
+    synced.value = snap.synced
+    loadError.value = snap.error
+  }
+
+  onMounted(() => {
+    session.subscribe(pullSession)
+    session.start()
   })
 
   onScopeDispose(() => {
+    session.dispose()
     stopWatch?.()
     if (poll) window.clearInterval(poll)
     if (canvasPoll) window.clearInterval(canvasPoll)
@@ -215,7 +238,10 @@ export function useGridState() {
     pending,
     trades,
     loading,
+    synced,
+    loadError,
     sync,
+    retry: session.retry,
     syncAccount,
     applyPaint,
     txUrl,
