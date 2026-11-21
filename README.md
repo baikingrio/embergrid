@@ -1,6 +1,6 @@
-# Monad Place
+# EmberGrid 余烬格
 
-Foundry contracts + Nuxt 4 frontend with shared Monad Testnet constants (`@monad-place/shared`).
+Foundry contracts + Nuxt 4 frontend with shared Monad Testnet constants (`@embergrid/shared`). The project was previously named **Monad Place**.
 
 ## Prerequisites
 

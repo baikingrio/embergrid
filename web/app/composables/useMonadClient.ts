@@ -1,4 +1,4 @@
-import { createMonadPublicClient } from '@monad-place/shared'
+import { createMonadPublicClient } from '@embergrid/shared'
 
 export function useMonadClient() {
   const config = useRuntimeConfig()

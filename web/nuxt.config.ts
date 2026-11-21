@@ -1,7 +1,7 @@
 import {
   MONAD_TESTNET_CHAIN_ID,
   MONAD_TESTNET_RPC_URL,
-} from '@monad-place/shared'
+} from '@embergrid/shared'
 
 export default defineNuxtConfig({
   ssr: false,
@@ -17,5 +17,5 @@ export default defineNuxtConfig({
       ),
     },
   },
-  transpile: ['@monad-place/shared'],
+  transpile: ['@embergrid/shared'],
 })

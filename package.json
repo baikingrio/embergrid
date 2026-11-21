@@ -1,5 +1,5 @@
 {
-  "name": "monad-place",
+  "name": "embergrid",
   "private": true,
   "scripts": {
     "test:contracts": "forge test --root contracts",

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { MONAD_TESTNET_CHAIN_ID } from '@monad-place/shared'
+import { MONAD_TESTNET_CHAIN_ID } from '@embergrid/shared'
 
 const config = useRuntimeConfig()
 
@@ -12,7 +12,7 @@ const rpcUrl = config.public.monadRpcUrl
 <template>
   <main class="flex min-h-screen flex-col items-center justify-center gap-4 p-8">
     <h1 class="text-4xl font-bold tracking-tight text-gray-900">
-      Monad Place
+      EmberGrid 余烬格
     </h1>
     <p class="text-lg text-gray-600">
       Chain ID:

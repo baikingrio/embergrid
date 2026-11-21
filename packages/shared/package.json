@@ -1,5 +1,5 @@
 {
-  "name": "@monad-place/shared",
+  "name": "@embergrid/shared",
   "type": "module",
   "private": true,
   "exports": {

@@ -16,7 +16,7 @@ importers:
 
   web:
     dependencies:
-      '@monad-place/shared':
+      '@embergrid/shared':
         specifier: workspace:*
         version: link:../packages/shared
       '@nuxtjs/tailwindcss':
