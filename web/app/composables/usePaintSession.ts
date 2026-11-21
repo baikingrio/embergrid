@@ -100,6 +100,30 @@ export function usePaintSession() {
     message.value = `已确认 ${formatEther(quote.value.nextPrice)} MON，可发送`
   }
 
+  async function withdraw() {
+    if (inflight.value || !account.value) return
+    inflight.value = true
+    status.value = 'pending'
+    message.value = '提现待确认'
+    try {
+      const hash = await walletClient().writeContract({
+        address: EMBERGRID_ADDRESS,
+        abi: embergridAbi,
+        functionName: 'withdraw',
+      })
+      txHash.value = hash
+      const receipt = await publicClient.waitForTransactionReceipt({ hash })
+      if (receipt.status !== 'success') throw new Error('提现失败')
+      status.value = 'confirmed'
+      message.value = '提现已确认'
+    } catch (error) {
+      status.value = 'failed'
+      message.value = error instanceof Error ? error.message : '提现失败'
+    } finally {
+      inflight.value = false
+    }
+  }
+
   async function sendPaint() {
     if (inflight.value || !quote.value || confirmedPrice.value === null) return
     if (heldByMe.value) return
@@ -169,6 +193,7 @@ export function usePaintSession() {
     fetchQuote,
     confirmQuote,
     sendPaint,
+    withdraw,
     formatEther,
   }
 }
