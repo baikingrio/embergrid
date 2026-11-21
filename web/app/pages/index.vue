@@ -116,8 +116,8 @@ function short(address: string) {
               {{ wallet.copied.value ? '已复制' : '复制' }}
             </button>
           </div>
-          <p class="mt-3">余额：{{ grid.formatEther(grid.balance.value) }} MON</p>
-          <p>可领取：{{ grid.formatEther(grid.pending.value) }} MON</p>
+          <p class="mt-3">余额：{{ grid.synced.value ? `${grid.formatEther(grid.balance.value)} MON` : '未同步' }}</p>
+          <p>可领取：{{ grid.synced.value ? `${grid.formatEther(grid.pending.value)} MON` : '未同步' }}</p>
           <button
             class="mt-3 rounded bg-stone-900 px-3 py-1.5 text-white disabled:opacity-40"
             type="button"

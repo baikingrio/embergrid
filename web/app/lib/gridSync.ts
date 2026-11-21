@@ -27,6 +27,7 @@ export function createGridSyncController(deps: {
   let error: string | null = null
   let watchersInstalled = false
   let attempt = 0
+  let runToken = 0
   let disposed = false
   let retryTimer: { cancel: () => void } | null = null
   const listeners = new Set<() => void>()
@@ -47,14 +48,15 @@ export function createGridSyncController(deps: {
 
   async function run() {
     if (disposed) return
+    const token = ++runToken
     try {
       await deps.sync()
-      if (disposed) return
+      if (disposed || token !== runToken) return
       synced = true
       error = null
       attempt = 0
     } catch (caught) {
-      if (disposed) return
+      if (disposed || token !== runToken) return
       synced = false
       error = describeSyncError(caught)
       const wait = backoffMs(attempt)
@@ -64,8 +66,10 @@ export function createGridSyncController(deps: {
         void run()
       }, wait)
     } finally {
-      if (!disposed) loading = false
-      emit()
+      if (!disposed && token === runToken) {
+        loading = false
+        emit()
+      }
     }
   }
 

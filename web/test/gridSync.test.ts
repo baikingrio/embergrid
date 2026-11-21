@@ -46,6 +46,41 @@ test('429 and exhausted fallbacks surface an error and still install watchers', 
   assert.equal(installed, 1)
 })
 
+test('a late failure does not erase a newer successful retry', async () => {
+  let releaseFirst: () => void = () => {}
+  const first = new Promise<void>((resolve) => {
+    releaseFirst = resolve
+  })
+  let calls = 0
+  let scheduled = 0
+  const session = createGridSyncController({
+    async sync() {
+      calls += 1
+      if (calls === 1) {
+        await first
+        throw new Error('HTTP request failed. Status: 429')
+      }
+    },
+    installWatchers() {},
+    schedule() {
+      scheduled += 1
+      return { cancel() {} }
+    },
+  })
+
+  session.start()
+  session.retry()
+  await flush()
+  assert.equal(session.snapshot().synced, true)
+  assert.equal(session.snapshot().error, null)
+
+  releaseFirst()
+  await flush()
+  assert.equal(session.snapshot().synced, true)
+  assert.equal(session.snapshot().error, null)
+  assert.equal(scheduled, 0)
+})
+
 test('manual retry runs again after every endpoint failed', async () => {
   let calls = 0
   const session = createGridSyncController({
