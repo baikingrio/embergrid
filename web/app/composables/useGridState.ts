@@ -24,6 +24,7 @@ export function useGridState() {
   const prizePool = ref(0n)
   const lastPainter = ref<Address>(zeroAddress)
   const endTime = ref(0)
+  const chainNow = ref(0)
   const balance = ref(0n)
   const pending = ref(0n)
   const trades = ref<TradeRow[]>([])
@@ -54,7 +55,7 @@ export function useGridState() {
   }
 
   async function syncRound() {
-    const [pool, painter, end] = await Promise.all([
+    const [pool, painter, end, block] = await Promise.all([
       publicClient.readContract({
         address: EMBERGRID_ADDRESS,
         abi: embergridAbi,
@@ -70,10 +71,12 @@ export function useGridState() {
         abi: embergridAbi,
         functionName: 'endTime',
       }),
+      publicClient.getBlock(),
     ])
     prizePool.value = pool
     lastPainter.value = painter
     endTime.value = Number(end)
+    chainNow.value = Number(block.timestamp)
   }
 
   async function syncAccount() {
@@ -136,6 +139,7 @@ export function useGridState() {
 
   let stopWatch: (() => void) | undefined
   let poll = 0
+  let roundPoll = 0
 
   onMounted(async () => {
     await sync()
@@ -166,11 +170,15 @@ export function useGridState() {
     poll = window.setInterval(() => {
       void sync().catch(() => {})
     }, 12000)
+    roundPoll = window.setInterval(() => {
+      void syncRound().catch(() => {})
+    }, 4000)
   })
 
   onScopeDispose(() => {
     stopWatch?.()
     if (poll) window.clearInterval(poll)
+    if (roundPoll) window.clearInterval(roundPoll)
   })
 
   watch(() => account.value?.address, () => {
@@ -181,6 +189,12 @@ export function useGridState() {
     return `${MONAD_TESTNET_EXPLORER}/tx/${hash}`
   }
 
+  const awaitingSettle = computed(() =>
+    lastPainter.value !== zeroAddress && endTime.value > 0 && chainNow.value >= endTime.value,
+  )
+  const winnerCredit = computed(() => (prizePool.value * 80n) / 100n)
+  const rollover = computed(() => prizePool.value - winnerCredit.value)
+
   return {
     colors,
     owned,
@@ -188,6 +202,10 @@ export function useGridState() {
     prizePool,
     lastPainter,
     endTime,
+    chainNow,
+    awaitingSettle,
+    winnerCredit,
+    rollover,
     balance,
     pending,
     trades,

@@ -130,6 +130,15 @@ function short(address: string) {
             />
           </div>
           <p class="mt-3">像素 #{{ paint.pixelId.value }}</p>
+          <div v-if="grid.awaitingSettle.value" class="mt-3 space-y-2 rounded border border-amber-300 bg-amber-50 p-3">
+            <p class="font-semibold text-amber-900">等待链上结算</p>
+            <p>预计获胜者：{{ lastPainterLabel }}</p>
+            <p>预计奖励：{{ grid.formatEther(grid.winnerCredit.value) }} MON（80%）</p>
+            <p>滚存：{{ grid.formatEther(grid.rollover.value) }} MON</p>
+            <button class="rounded bg-amber-800 px-3 py-1.5 text-white disabled:opacity-40" type="button" :disabled="paint.inflight.value" @click="paint.settleRound()">
+              {{ paint.inflight.value ? '等待回执…' : '结算本轮' }}
+            </button>
+          </div>
           <p v-if="grid.loading.value" class="text-stone-500">正在读取画布…</p>
           <template v-else-if="paint.quote.value">
             <p>下一口价：{{ paint.formatEther(paint.quote.value.nextPrice) }} MON</p>
@@ -137,7 +146,7 @@ function short(address: string) {
             <p>奖池增量：{{ paint.formatEther(paint.quote.value.poolDelta) }} MON</p>
             <p v-if="paint.quote.value.owner === zeroAddress">首次购买，支付金额全部进入奖池</p>
             <p v-if="paint.heldByMe.value" class="font-semibold text-amber-800">你已持有</p>
-            <div class="mt-3 flex gap-2">
+            <div v-if="!grid.awaitingSettle.value" class="mt-3 flex gap-2">
               <button class="rounded border px-3 py-1.5 disabled:opacity-40" type="button" :disabled="paint.heldByMe.value || paint.inflight.value" @click="paint.confirmQuote()">
                 确认金额
               </button>

@@ -20,6 +20,15 @@ export type PaintQuote = {
 
 const ZERO = zeroAddress
 
+function explain(error: unknown, fallback: string) {
+  const text = error instanceof Error ? error.message : ''
+  if (text.includes('RoundAwaitingSettle')) return '本轮已到期，请先结算后再购买'
+  if (text.includes('CannotBuyOwnPixel')) return '不能购买自己持有的像素'
+  if (text.includes('IncorrectPayment')) return '价格已变化，请重新确认'
+  if (text.includes('NothingToWithdraw')) return '没有可领取余额'
+  return text || fallback
+}
+
 export function usePaintSession() {
   const config = useRuntimeConfig()
   const { account } = useDemoWallet()
@@ -118,7 +127,7 @@ export function usePaintSession() {
       message.value = '提现已确认'
     } catch (error) {
       status.value = 'failed'
-      message.value = error instanceof Error ? error.message : '提现失败'
+      message.value = error instanceof Error ? explain(error, '提现失败') : '提现失败'
     } finally {
       inflight.value = false
     }
@@ -172,8 +181,38 @@ export function usePaintSession() {
     } catch (error) {
       optimisticColor.value = null
       status.value = 'failed'
-      message.value = error instanceof Error ? error.message : '交易失败，已恢复链上颜色'
+      message.value = explain(error, '交易失败，已恢复链上颜色')
       if (quote.value) await readChainColor(quote.value.pixelId)
+    } finally {
+      inflight.value = false
+    }
+  }
+
+  async function settleRound() {
+    if (inflight.value || !account.value) return
+    inflight.value = true
+    status.value = 'pending'
+    message.value = '结算待确认'
+    try {
+      const pool = await publicClient.readContract({
+        address: EMBERGRID_ADDRESS,
+        abi: embergridAbi,
+        functionName: 'prizePool',
+      })
+      const credit = (pool * 80n) / 100n
+      const hash = await walletClient().writeContract({
+        address: EMBERGRID_ADDRESS,
+        abi: embergridAbi,
+        functionName: 'settleRound',
+      })
+      txHash.value = hash
+      const receipt = await publicClient.waitForTransactionReceipt({ hash })
+      if (receipt.status !== 'success') throw new Error('结算失败')
+      status.value = 'confirmed'
+      message.value = `结算完成。${formatEther(credit)} MON 已记入最后争夺者的可领取余额，余款留在奖池。可以开启下一轮。`
+    } catch (error) {
+      status.value = 'failed'
+      message.value = explain(error, '结算失败')
     } finally {
       inflight.value = false
     }
@@ -194,6 +233,7 @@ export function usePaintSession() {
     confirmQuote,
     sendPaint,
     withdraw,
+    settleRound,
     formatEther,
   }
 }
