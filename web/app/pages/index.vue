@@ -345,7 +345,7 @@ async function claim() {
       <div class="section-heading"><h2>链上最近成交</h2><span>真实交易，可在 Monad 浏览器核验</span></div>
       <p v-if="grid.trades.value.length === 0" class="feed-empty">{{ grid.synced.value ? '当前读取范围内暂无成交。选一格，开启新的争夺。' : '等待链上记录同步…' }}</p>
       <ul v-else class="mt-2 space-y-2">
-        <li v-for="trade in grid.trades.value" :key="trade.hash" class="flex items-center justify-between gap-3">
+        <li v-for="trade in grid.trades.value" :key="`${trade.hash}:${trade.logIndex}`" class="flex items-center justify-between gap-3">
           <span>#{{ trade.pixelId }} · {{ short(trade.painter) }} · {{ grid.formatEther(trade.payment) }} MON</span>
           <a class="text-orange-700 underline" :href="grid.txUrl(trade.hash)" target="_blank" rel="noreferrer">浏览器</a>
         </li>

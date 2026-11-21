@@ -6,8 +6,8 @@ export type CanvasSnapshot = {
 }
 
 export function mergeCanvasSnapshot(
-  snapshot: Pick<CanvasSnapshot, 'colors' | 'owned'>,
-  pins: ReadonlyMap<number, number>,
+  snapshot: Pick<CanvasSnapshot, 'colors' | 'owned' | 'blockNumber'>,
+  pins: ReadonlyMap<number, { color: number, blockNumber: bigint }>,
 ) {
   const count = snapshot.colors.length
   const colors = new Uint8Array(count)
@@ -22,13 +22,13 @@ export function mergeCanvasSnapshot(
       owned[id] = chainOwned
       continue
     }
-    if (chainOwned && chainColor === pin) {
+    if (BigInt(snapshot.blockNumber) >= pin.blockNumber) {
       colors[id] = chainColor
-      owned[id] = 1
+      owned[id] = chainOwned
       released.push(id)
       continue
     }
-    colors[id] = pin
+    colors[id] = pin.color
     owned[id] = 1
   }
   return { colors, owned, released }

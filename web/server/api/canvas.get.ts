@@ -10,18 +10,17 @@ const cache = createSnapshotCache<CanvasSnapshot>(8_000)
 async function loadCanvas(): Promise<CanvasSnapshot> {
   const config = useRuntimeConfig()
   const client = createMonadPublicClient(config.public.monadRpcUrl)
-  const [blockNumber, pages] = await Promise.all([
-    client.getBlockNumber(),
-    Promise.all(Array.from({ length: PIXEL_COUNT / PAGE }, (_, page) => {
-      const start = page * PAGE
-      return client.readContract({
-        address: EMBERGRID_ADDRESS,
-        abi: embergridAbi,
-        functionName: 'getPixels',
-        args: [BigInt(start), BigInt(PAGE)],
-      }).then((result) => ({ start, result }))
-    })),
-  ])
+  const blockNumber = await client.getBlockNumber({ cacheTime: 0 })
+  const pages = await Promise.all(Array.from({ length: PIXEL_COUNT / PAGE }, (_, page) => {
+    const start = page * PAGE
+    return client.readContract({
+      address: EMBERGRID_ADDRESS,
+      abi: embergridAbi,
+      functionName: 'getPixels',
+      args: [BigInt(start), BigInt(PAGE)],
+      blockNumber,
+    }).then((result) => ({ start, result }))
+  }))
   const colors = Array<number>(PIXEL_COUNT).fill(0)
   const owned = Array<number>(PIXEL_COUNT).fill(0)
   for (const { start, result } of pages) {

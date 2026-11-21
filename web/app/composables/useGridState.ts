@@ -3,9 +3,12 @@ import { EMBERGRID_ADDRESS, MONAD_TESTNET_EXPLORER, createMonadPublicClient } fr
 import { mergeCanvasSnapshot, type CanvasSnapshot } from '~/lib/canvasSnapshot'
 import { embergridAbi } from '~/lib/embergridAbi'
 import { createGridSyncController } from '~/lib/gridSync'
+import { selectCanvasUpdates, type CanvasUpdates, type CanvasPaint } from '~/lib/canvasUpdates'
 
 export type TradeRow = {
   hash: Hex
+  blockNumber: string
+  logIndex: number
   pixelId: number
   color: number
   payment: bigint
@@ -36,7 +39,8 @@ export function useGridState() {
   const loadError = ref<string | null>(null)
   const canvasBlock = ref('0')
   const canvasUpdatedAt = ref(0)
-  const pins = new Map<number, number>()
+  const pins = new Map<number, { color: number, blockNumber: bigint }>()
+  let paintCursor: bigint | null = null
   let accountFlight: Promise<void> | null = null
   let accountFlightAddress = ''
 
@@ -45,18 +49,17 @@ export function useGridState() {
   }
 
   async function readCanvasFromChain(): Promise<CanvasSnapshot> {
-    const [blockNumber, pages] = await Promise.all([
-      publicClient.getBlockNumber(),
-      Promise.all(Array.from({ length: PIXEL_COUNT / PAGE }, (_, page) => {
-        const start = page * PAGE
-        return publicClient.readContract({
-          address: EMBERGRID_ADDRESS,
-          abi: embergridAbi,
-          functionName: 'getPixels',
-          args: [BigInt(start), BigInt(PAGE)],
-        }).then((result) => ({ start, result }))
-      })),
-    ])
+    const blockNumber = await publicClient.getBlockNumber({ cacheTime: 0 })
+    const pages = await Promise.all(Array.from({ length: PIXEL_COUNT / PAGE }, (_, page) => {
+      const start = page * PAGE
+      return publicClient.readContract({
+        address: EMBERGRID_ADDRESS,
+        abi: embergridAbi,
+        functionName: 'getPixels',
+        args: [BigInt(start), BigInt(PAGE)],
+        blockNumber,
+      }).then((result) => ({ start, result }))
+    }))
     const snapshotColors = Array<number>(PIXEL_COUNT).fill(0)
     const snapshotOwned = Array<number>(PIXEL_COUNT).fill(0)
     for (const { start, result } of pages) {
@@ -75,12 +78,15 @@ export function useGridState() {
   }
 
   function showSnapshot(snapshot: CanvasSnapshot) {
+    const block = BigInt(snapshot.blockNumber)
+    if (block < BigInt(canvasBlock.value)) return
     const merged = mergeCanvasSnapshot(snapshot, pins)
     for (const id of merged.released) pins.delete(id)
     colors.value = merged.colors
     owned.value = merged.owned
     canvasBlock.value = snapshot.blockNumber
     canvasUpdatedAt.value = snapshot.updatedAt
+    if (paintCursor === null || block > paintCursor) paintCursor = block
     bump()
   }
 
@@ -154,16 +160,28 @@ export function useGridState() {
       fromBlock,
       toBlock: latest,
     })
-    trades.value = logs
+    mergeTrades(logs
       .slice(-12)
       .reverse()
       .map((log) => ({
         hash: log.transactionHash,
+        blockNumber: log.blockNumber.toString(),
+        logIndex: log.logIndex,
         pixelId: Number(log.args.pixelId ?? 0n),
         color: Number(log.args.color ?? 0),
         payment: log.args.payment ?? 0n,
         painter: log.args.newOwner ?? zeroAddress,
-      }))
+      })))
+  }
+
+  function mergeTrades(incoming: TradeRow[]) {
+    const unique = new Map<string, TradeRow>()
+    for (const trade of [...trades.value, ...incoming]) unique.set(`${trade.hash}:${trade.logIndex}`, trade)
+    trades.value = [...unique.values()].sort((a, b) => {
+      const left = BigInt(a.blockNumber)
+      const right = BigInt(b.blockNumber)
+      return left === right ? b.logIndex - a.logIndex : left > right ? -1 : 1
+    }).slice(0, 12)
   }
 
   async function sync() {
@@ -175,63 +193,115 @@ export function useGridState() {
     ])
   }
 
-  function applyPaint(pixelId: number, color: number) {
-    pins.set(pixelId, color)
+  function applyPaints(paints: CanvasPaint[]) {
+    if (!paints.length) return
     const nextColors = new Uint8Array(colors.value)
     const nextOwned = new Uint8Array(owned.value)
-    nextColors[pixelId] = color
-    nextOwned[pixelId] = 1
+    for (const paint of paints) {
+      pins.set(paint.pixelId, { color: paint.color, blockNumber: BigInt(paint.blockNumber) })
+      nextColors[paint.pixelId] = paint.color
+      nextOwned[paint.pixelId] = 1
+    }
     colors.value = nextColors
     owned.value = nextOwned
     bump()
   }
 
-  let stopWatch: (() => void) | undefined
   let poll = 0
   let canvasPoll = 0
+  let updatesPoll = 0
+  let liveGeneration = 0
+  let updatesFlight: Promise<void> | null = null
+  let updateFailures = 0
+  let nextUpdatesAt = 0
+  let lastDetailsSync = 0
 
   function stopPolling() {
+    liveGeneration += 1
     if (poll) window.clearInterval(poll)
     if (canvasPoll) window.clearInterval(canvasPoll)
+    if (updatesPoll) window.clearInterval(updatesPoll)
     poll = 0
     canvasPoll = 0
+    updatesPoll = 0
   }
 
-  function watchPaints() {
-    stopWatch?.()
-    stopWatch = publicClient.watchContractEvent({
-      address: EMBERGRID_ADDRESS,
-      abi: embergridAbi,
-      eventName: 'Painted',
-      pollingInterval: 15_000,
-      onLogs(logs) {
-        for (const log of logs) {
-          const id = Number(log.args.pixelId ?? 0n)
-          applyPaint(id, Number(log.args.color ?? 0))
-          if (log.transactionHash && log.args.newOwner) {
-            trades.value = [
-              {
-                hash: log.transactionHash,
-                pixelId: id,
-                color: Number(log.args.color ?? 0),
-                payment: log.args.payment ?? 0n,
-                painter: log.args.newOwner,
-              },
-              ...trades.value,
-            ].slice(0, 12)
-          }
+  async function readUpdates(): Promise<CanvasUpdates> {
+    try {
+      return await $fetch<CanvasUpdates>('/api/canvas-updates')
+    } catch {
+      // Stateless fallback also works when a provider does not support filters.
+      const head = await publicClient.getBlockNumber({ cacheTime: 0 })
+      const from = head > 31n ? head - 31n : 0n
+      const logs = await publicClient.getContractEvents({
+        address: EMBERGRID_ADDRESS,
+        abi: embergridAbi,
+        eventName: 'Painted',
+        fromBlock: from,
+        toBlock: head,
+      })
+      return {
+        fromBlock: from.toString(),
+        toBlock: head.toString(),
+        paints: logs.filter((log) => !log.removed).map((log) => ({
+          pixelId: Number(log.args.pixelId ?? 0n),
+          color: Number(log.args.color ?? 0),
+          blockNumber: log.blockNumber.toString(),
+          logIndex: log.logIndex,
+          hash: log.transactionHash,
+          painter: log.args.newOwner ?? zeroAddress,
+          payment: (log.args.payment ?? 0n).toString(),
+        })),
+      }
+    }
+  }
+
+  function syncUpdates() {
+    if (updatesFlight || paintCursor === null || document.hidden || Date.now() < nextUpdatesAt) return
+    const generation = liveGeneration
+    updatesFlight = (async () => {
+      try {
+        const batch = await readUpdates()
+        if (generation !== liveGeneration) return
+        let selected = selectCanvasUpdates(batch, paintCursor!)
+        if (selected.gap) {
+          // A resumed tab can be outside the recent log window. Read one fresh,
+          // block-pinned snapshot before advancing; never skip the missing range.
+          const snapshot = await readCanvasFromChain()
+          if (generation !== liveGeneration) return
+          showSnapshot(snapshot)
+          selected = selectCanvasUpdates(batch, paintCursor!)
         }
-        void syncRound().catch(() => {})
-      },
-    })
+        if (selected.gap) return
+        applyPaints(selected.paints)
+        mergeTrades(selected.paints.map((paint) => ({
+          ...paint,
+          payment: BigInt(paint.payment),
+        })))
+        paintCursor = selected.cursor
+        updateFailures = 0
+        nextUpdatesAt = 0
+        if (selected.paints.length && Date.now() - lastDetailsSync >= 5_000) {
+          lastDetailsSync = Date.now()
+          void syncRound().then(syncAccount).catch(() => {})
+        }
+      } catch {
+        if (generation !== liveGeneration) return
+        updateFailures += 1
+        nextUpdatesAt = Date.now() + Math.min(15_000, 1_000 * 2 ** updateFailures)
+      } finally {
+        updatesFlight = null
+      }
+    })()
   }
 
   function startPolling() {
     stopPolling()
-    stopWatch?.()
-    stopWatch = undefined
     if (document.hidden) return
-    watchPaints()
+    updateFailures = 0
+    nextUpdatesAt = 0
+    syncUpdates()
+    updatesPoll = window.setInterval(syncUpdates, 1_000)
     const jitter = Math.floor(Math.random() * 2_000)
     poll = window.setInterval(() => {
       void syncRound().then(() => syncAccount()).catch(() => {})
@@ -243,8 +313,6 @@ export function useGridState() {
 
   function onVisibility() {
     if (document.hidden) {
-      stopWatch?.()
-      stopWatch = undefined
       stopPolling()
       return
     }
@@ -281,7 +349,6 @@ export function useGridState() {
   onScopeDispose(() => {
     session.dispose()
     document.removeEventListener('visibilitychange', onVisibility)
-    stopWatch?.()
     stopPolling()
   })
 
@@ -322,7 +389,7 @@ export function useGridState() {
     sync,
     retry: session.retry,
     syncAccount,
-    applyPaint,
+    applyPaints,
     txUrl,
     formatEther,
   }
