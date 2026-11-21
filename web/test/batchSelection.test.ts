@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { batchPricesMatch, samePixelIds, toggleBatchId } from '../app/lib/batchSelection.ts'
+import { addBatchIds, batchPricesMatch, pixelsOnLine, samePixelIds, toggleBatchId } from '../app/lib/batchSelection.ts'
 
 test('toggle adds, removes, and stops at 64', () => {
   const added = toggleBatchId([], 2)
@@ -18,6 +18,22 @@ test('toggle adds, removes, and stops at 64', () => {
   const invalid = toggleBatchId([], 4096)
   assert.equal(invalid.error, '像素编号需在 0 到 4095')
   assert.deepEqual(invalid.ids, [])
+})
+
+test('a stroke adds new pixels, keeps ones already selected, and stops at 64', () => {
+  const first = addBatchIds([1], [1, 2, 3])
+  assert.deepEqual(first.ids, [1, 2, 3])
+  assert.equal(first.capped, false)
+
+  const full = Array.from({ length: 64 }, (_, index) => index)
+  const overflow = addBatchIds(full, [64, 65])
+  assert.deepEqual(overflow.ids, full)
+  assert.equal(overflow.capped, true)
+})
+
+test('a drag line does not skip pixels between the samples', () => {
+  assert.deepEqual(pixelsOnLine(0, 2), [0, 1, 2])
+  assert.deepEqual(pixelsOnLine(0, 64), [0, 64])
 })
 
 test('a changed pixel price rejects the whole confirmed batch', () => {

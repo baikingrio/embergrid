@@ -4,6 +4,7 @@ EmberGrid 余烬格是一款 Monad 测试网上的像素领地争夺游戏。玩
 
 - 仓库：https://github.com/baikingrio/embergrid
 - 测试网合约：[`0x02C88408bd774503101803dC681793b14Ee5847a`](https://testnet.monadvision.com/address/0x02C88408bd774503101803dC681793b14Ee5847a)
+- 演示水龙头：[`0x81e72AF58Ac6Cf77902a7901eC83743C2c3248FB`](https://testnet.monadvision.com/address/0x81e72AF58Ac6Cf77902a7901eC83743C2c3248FB)
 - 首屏截图：[docs/submission/home.png](submission/home.png)
 - 公开演示：https://embergrid-zeta.vercel.app
 

@@ -6,6 +6,8 @@ const wallet = useDemoWallet()
 const paint = usePaintSession()
 const grid = useGridState()
 const now = ref(Date.now())
+const claiming = ref(false)
+const claimMessage = ref('')
 
 let clock = 0
 onMounted(() => {
@@ -56,6 +58,23 @@ watch(() => grid.synced.value, (synced) => {
 function short(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`
 }
+
+async function claim() {
+  const address = wallet.account.value?.address
+  if (!address || claiming.value) return
+  claiming.value = true
+  claimMessage.value = '正在领取测试 MON'
+  try {
+    await $fetch('/api/claim', { method: 'POST', body: { address } })
+    claimMessage.value = '已领取 0.2 MON'
+    await grid.syncAccount()
+  } catch (error) {
+    const data = error as { data?: { statusMessage?: string }, statusMessage?: string }
+    claimMessage.value = data.data?.statusMessage || data.statusMessage || '领取失败'
+  } finally {
+    claiming.value = false
+  }
+}
 </script>
 
 <template>
@@ -105,8 +124,10 @@ function short(address: string) {
           :pending-paints="paint.pendingPaints.value"
           @select="selectPixel"
           @toggle-batch="paint.toggleBatch"
+          @add-batch="paint.addBatchIds"
+          @stroke-end="paint.fetchBatchQuotes"
         />
-        <p id="canvas-help" class="mt-2 text-xs text-stone-500">方向键选择像素，Tab 到颜色和确认金额。Shift 点击加入批量，最多 64 格。</p>
+        <p id="canvas-help" class="mt-2 text-xs text-stone-500">方向键选择像素，Tab 到颜色和确认金额。按住拖动连续加入批量，Shift 单击增删单格，最多 64 格。</p>
       </div>
 
       <div class="flex flex-col gap-4">
@@ -120,6 +141,15 @@ function short(address: string) {
               {{ wallet.copied.value ? '已复制' : '复制' }}
             </button>
           </div>
+          <button
+            class="mt-3 rounded border border-stone-300 px-3 py-1.5 disabled:opacity-40"
+            type="button"
+            :disabled="!wallet.account.value || claiming"
+            @click="claim()"
+          >
+            {{ claiming ? '领取中…' : '领取 0.2 MON' }}
+          </button>
+          <p v-if="claimMessage" class="mt-2 text-stone-600">{{ claimMessage }}</p>
           <p class="mt-3">余额：{{ grid.synced.value ? `${grid.formatEther(grid.balance.value)} MON` : '未同步' }}</p>
           <p>可领取：{{ grid.synced.value ? `${grid.formatEther(grid.pending.value)} MON` : '未同步' }}</p>
           <button
@@ -195,7 +225,7 @@ function short(address: string) {
           </template>
           <div class="mt-4 rounded border border-stone-200 p-3">
             <p class="font-semibold">批量绘图 <span class="font-normal text-stone-500">最多 64 格，一次上链</span></p>
-            <p class="mt-1 text-stone-600">任一格价格变化或不合法时，整笔失败，画布保持链上状态。</p>
+            <p class="mt-1 text-stone-600">按住拖动像画画一样连续选格。松开后确认合计金额，再一次上链。任一格价格变化或不合法时，整笔失败。</p>
             <div class="mt-2 flex flex-wrap gap-2">
               <button class="rounded border px-3 py-1.5 disabled:opacity-40" type="button" :disabled="paint.inflight.value" @click="paint.toggleBatch(paint.pixelId.value)">
                 {{ paint.batchIds.value.includes(paint.pixelId.value) ? '移出当前像素' : '加入当前像素' }}

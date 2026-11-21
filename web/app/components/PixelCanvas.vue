@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { pixelsOnLine } from '~/lib/batchSelection'
 import { EMPTY_PIXEL, PALETTE } from '~/lib/palette'
 import { movePixel } from '~/lib/pixelMove'
 
@@ -14,9 +15,12 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [id: number]
   toggleBatch: [id: number]
+  addBatch: [ids: number[]]
+  strokeEnd: []
 }>()
 
 const canvas = ref<HTMLCanvasElement | null>(null)
+let drag: { pointerId: number, lastId: number, moved: boolean } | null = null
 const SIZE = 64
 const SCALE = 8
 
@@ -50,7 +54,7 @@ function draw() {
   }
 }
 
-function pixelFromEvent(event: MouseEvent) {
+function pixelFromEvent(event: PointerEvent) {
   const el = canvas.value
   if (!el) return null
   const rect = el.getBoundingClientRect()
@@ -60,11 +64,35 @@ function pixelFromEvent(event: MouseEvent) {
   return y * SIZE + x
 }
 
-function onClick(event: MouseEvent) {
+function onPointerDown(event: PointerEvent) {
+  if (event.button !== 0) return
   const id = pixelFromEvent(event)
   if (id === null) return
-  if (event.shiftKey) emit('toggleBatch', id)
-  emit('select', id)
+  canvas.value?.setPointerCapture(event.pointerId)
+  drag = { pointerId: event.pointerId, lastId: id, moved: false }
+}
+
+function onPointerMove(event: PointerEvent) {
+  if (!drag || event.pointerId !== drag.pointerId) return
+  const id = pixelFromEvent(event)
+  if (id === null || id === drag.lastId) return
+  drag.moved = true
+  const line = pixelsOnLine(drag.lastId, id)
+  drag.lastId = id
+  emit('addBatch', line)
+}
+
+function onPointerUp(event: PointerEvent) {
+  if (!drag || event.pointerId !== drag.pointerId) return
+  const id = pixelFromEvent(event) ?? drag.lastId
+  const moved = drag.moved
+  drag = null
+  if (!moved) {
+    if (event.shiftKey) emit('toggleBatch', id)
+    emit('select', id)
+    return
+  }
+  emit('strokeEnd')
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -89,14 +117,17 @@ onMounted(draw)
 <template>
   <canvas
     ref="canvas"
-    class="h-auto w-full max-w-[512px] cursor-crosshair rounded border border-stone-700 bg-stone-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500"
+    class="h-auto w-full max-w-[512px] cursor-crosshair touch-none rounded border border-stone-700 bg-stone-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500"
     :width="SIZE * SCALE"
     :height="SIZE * SCALE"
     tabindex="0"
     role="application"
-    :aria-label="`余烬格画布，64 乘 64。当前像素 ${selected ?? 0}。方向键移动选择，按住 Shift 点击加入批量。`"
+    :aria-label="`余烬格画布，64 乘 64。当前像素 ${selected ?? 0}。方向键移动选择，按住拖动加入批量。`"
     aria-describedby="canvas-help"
-    @click="onClick"
+    @pointerdown="onPointerDown"
+    @pointermove="onPointerMove"
+    @pointerup="onPointerUp"
+    @pointercancel="onPointerUp"
     @keydown="onKeydown"
   />
 </template>

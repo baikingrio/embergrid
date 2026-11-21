@@ -7,7 +7,7 @@ import {
   type Hex,
 } from 'viem'
 import { EMBERGRID_ADDRESS, createMonadPublicClient, monadTestnet, monadTransport } from '@embergrid/shared'
-import { batchPricesMatch, samePixelIds, toggleBatchId } from '~/lib/batchSelection'
+import { addBatchIds as includeBatchIds, batchPricesMatch, samePixelIds, toggleBatchId } from '~/lib/batchSelection'
 import { embergridAbi } from '~/lib/embergridAbi'
 import { createQuoteRequests } from '~/lib/quoteRequests'
 
@@ -179,6 +179,17 @@ export function usePaintSession() {
     }
     batchIds.value = next.ids
     void fetchBatchQuotes()
+  }
+
+  function addBatchIds(incoming: number[]) {
+    const next = includeBatchIds(batchIds.value, incoming)
+    if (samePixelIds(next.ids, batchIds.value)) {
+      if (next.capped) message.value = '批量最多 64 格'
+      return
+    }
+    batchIds.value = next.ids
+    clearBatchConfirmation()
+    if (next.capped) message.value = '批量最多 64 格'
   }
 
   function clearBatch() {
@@ -457,6 +468,8 @@ export function usePaintSession() {
     fetchQuote,
     confirmQuote,
     toggleBatch,
+    addBatchIds,
+    fetchBatchQuotes,
     clearBatch,
     confirmBatch,
     sendPaint,
