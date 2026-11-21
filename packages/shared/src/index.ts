@@ -5,3 +5,9 @@ export {
   createMonadPublicClient,
   monadTestnet,
 } from './monad'
+
+export {
+  DEMO_A_ADDRESS,
+  DEMO_B_ADDRESS,
+  EMBERGRID_ADDRESS,
+} from './deployment'
