@@ -1,0 +1,10 @@
+{
+  "name": "monad-place",
+  "private": true,
+  "scripts": {
+    "test:contracts": "forge test --root contracts",
+    "build:contracts": "forge build --root contracts",
+    "dev:web": "pnpm --filter web dev",
+    "build:web": "pnpm --filter web build"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare"
+  },
+  "dependencies": {
+    "@monad-place/shared": "workspace:*",
+    "@nuxtjs/tailwindcss": "^6.14.0",
+    "nuxt": "^4.6.4",
+    "viem": "^2.58.4"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}
