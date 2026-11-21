@@ -6,6 +6,7 @@ import {
   type Hex,
 } from 'viem'
 import { EMBERGRID_ADDRESS, createMonadPublicClient, monadTestnet, monadTransport } from '@embergrid/shared'
+import { batchPricesMatch, samePixelIds, toggleBatchId } from '~/lib/batchSelection'
 import { embergridAbi } from '~/lib/embergridAbi'
 import { createQuoteRequests } from '~/lib/quoteRequests'
 
@@ -26,6 +27,7 @@ function explain(error: unknown, fallback: string) {
   if (text.includes('CannotBuyOwnPixel')) return '不能购买自己持有的像素'
   if (text.includes('IncorrectPayment')) return '价格已变化，请重新确认'
   if (text.includes('NothingToWithdraw')) return '没有可领取余额'
+  if (text.includes('InvalidBatch') || text.includes('DuplicatePixelId')) return '批量不合法，整笔未上链'
   if (text.includes('429') || text.includes('Rate limit')) return '公共节点繁忙，请稍后再点一次'
   return text || fallback
 }
@@ -47,6 +49,12 @@ export function usePaintSession() {
   const chainColor = ref<number | null>(null)
   const optimisticColor = ref<number | null>(null)
   const txHash = ref<Hex | null>(null)
+  const batchIds = ref<number[]>([])
+  const batchQuotes = ref<PaintQuote[]>([])
+  const batchQuoting = shallowRef(false)
+  const confirmedBatch = ref<{ ids: number[], prices: bigint[], color: number, total: bigint } | null>(null)
+  const pendingPaints = ref<{ id: number, color: number }[]>([])
+  let batchTicket = 0
 
   const heldByMe = computed(() => {
     if (!quote.value || !account.value) return false
@@ -54,6 +62,17 @@ export function usePaintSession() {
   })
 
   const displayColor = computed(() => optimisticColor.value ?? chainColor.value)
+  const batchTotal = computed(() => batchQuotes.value.reduce((sum, item) => sum + item.nextPrice, 0n))
+  const batchIncludesMine = computed(() => {
+    const mine = account.value?.address.toLowerCase()
+    if (!mine) return false
+    return batchQuotes.value.some((item) => item.owner.toLowerCase() === mine)
+  })
+  const batchReady = computed(() => {
+    const confirmed = confirmedBatch.value
+    if (!confirmed) return false
+    return confirmed.color === color.value && samePixelIds(confirmed.ids, batchIds.value)
+  })
 
   function walletClient() {
     if (!account.value) throw new Error('钱包尚未就绪')
@@ -72,6 +91,32 @@ export function usePaintSession() {
       args: [BigInt(id)],
     })
     chainColor.value = pixel[2]
+  }
+
+  function toQuote(id: number, owner: Address, nextPrice: bigint, previousCredit: bigint, paintColor: number): PaintQuote {
+    return {
+      pixelId: id,
+      color: paintColor,
+      owner,
+      nextPrice,
+      previousCredit,
+      poolDelta: owner === ZERO ? nextPrice : nextPrice - previousCredit,
+    }
+  }
+
+  async function readQuote(id: number) {
+    const [owner, nextPrice, previousCredit] = await publicClient.readContract({
+      address: EMBERGRID_ADDRESS,
+      abi: embergridAbi,
+      functionName: 'quotePaint',
+      args: [BigInt(id)],
+    })
+    return { owner, nextPrice, previousCredit }
+  }
+
+  function clearPending() {
+    optimisticColor.value = null
+    pendingPaints.value = []
   }
 
   const quotes = createQuoteRequests()
@@ -95,25 +140,12 @@ export function usePaintSession() {
     quoting.value = true
     message.value = '正在报价…'
     try {
-      const [owner, nextPrice, previousCredit] = await publicClient.readContract({
-        address: EMBERGRID_ADDRESS,
-        abi: embergridAbi,
-        functionName: 'quotePaint',
-        args: [BigInt(id)],
-      })
+      const priced = await readQuote(id)
       if (!ticket.isCurrent(pixelId.value)) return
-      const poolDelta = owner === ZERO ? nextPrice : nextPrice - previousCredit
-      quote.value = {
-        pixelId: id,
-        color: color.value,
-        owner,
-        nextPrice,
-        previousCredit,
-        poolDelta,
-      }
-      optimisticColor.value = null
+      quote.value = toQuote(id, priced.owner, priced.nextPrice, priced.previousCredit, color.value)
+      clearPending()
       status.value = 'idle'
-      message.value = owner === ZERO ? '首次购买，支付金额全部进入奖池' : '请确认金额后再发送'
+      message.value = priced.owner === ZERO ? '首次购买，支付金额全部进入奖池' : '请确认金额后再发送'
       txHash.value = null
       await readChainColor(id)
     } catch (error) {
@@ -131,6 +163,75 @@ export function usePaintSession() {
     confirmedPixelId.value = quote.value.pixelId
     quote.value = { ...quote.value, color: color.value }
     message.value = `已确认 ${formatEther(quote.value.nextPrice)} MON，可发送`
+  }
+
+  function clearBatchConfirmation() {
+    confirmedBatch.value = null
+  }
+
+  function toggleBatch(id: number) {
+    const next = toggleBatchId(batchIds.value, id)
+    if (next.error) {
+      message.value = next.error
+      return
+    }
+    batchIds.value = next.ids
+    void fetchBatchQuotes()
+  }
+
+  function clearBatch() {
+    batchTicket += 1
+    batchIds.value = []
+    batchQuotes.value = []
+    clearBatchConfirmation()
+    batchQuoting.value = false
+  }
+
+  async function fetchBatchQuotes() {
+    const ids = [...batchIds.value]
+    const ticket = ++batchTicket
+    batchQuotes.value = []
+    clearBatchConfirmation()
+    if (ids.length === 0) {
+      batchQuoting.value = false
+      return
+    }
+    batchQuoting.value = true
+    try {
+      const priced = await Promise.all(ids.map((id) => readQuote(id)))
+      if (ticket !== batchTicket || !samePixelIds(ids, batchIds.value)) return
+      batchQuotes.value = priced.map((item, index) => toQuote(
+        ids[index] ?? 0,
+        item.owner,
+        item.nextPrice,
+        item.previousCredit,
+        color.value,
+      ))
+      message.value = `已读取 ${ids.length} 格报价，确认后一次提交`
+    } catch (error) {
+      if (ticket !== batchTicket) return
+      batchQuotes.value = []
+      message.value = explain(error, '批量报价读取失败')
+    } finally {
+      if (ticket === batchTicket) batchQuoting.value = false
+    }
+  }
+
+  function confirmBatch() {
+    if (
+      batchQuoting.value
+      || inflight.value
+      || batchIncludesMine.value
+      || batchQuotes.value.length === 0
+      || !samePixelIds(batchQuotes.value.map((item) => item.pixelId), batchIds.value)
+    ) return
+    confirmedBatch.value = {
+      ids: batchIds.value.slice(),
+      prices: batchQuotes.value.map((item) => item.nextPrice),
+      color: color.value,
+      total: batchTotal.value,
+    }
+    message.value = `已确认批量 ${formatEther(batchTotal.value)} MON，共 ${batchIds.value.length} 格`
   }
 
   async function withdraw() {
@@ -174,29 +275,31 @@ export function usePaintSession() {
     const paintColor = quote.value.color
     inflight.value = true
     status.value = 'pending'
+    pendingPaints.value = [{ id: targetId, color: paintColor }]
     optimisticColor.value = paintColor
     message.value = '交易待确认'
     try {
-      if (pixelId.value !== targetId) return
-      const fresh = await publicClient.readContract({
-        address: EMBERGRID_ADDRESS,
-        abi: embergridAbi,
-        functionName: 'quotePaint',
-        args: [BigInt(targetId)],
-      })
-      if (pixelId.value !== targetId || confirmedPixelId.value !== targetId) return
-      if (fresh[1] !== price) {
-        if (!quote.value || quote.value.pixelId !== targetId) return
-        quote.value = {
-          ...quote.value,
-          owner: fresh[0],
-          nextPrice: fresh[1],
-          previousCredit: fresh[2],
-          poolDelta: fresh[0] === ZERO ? fresh[1] : fresh[1] - fresh[2],
+      if (pixelId.value !== targetId || confirmedPixelId.value !== targetId) {
+        clearPending()
+        status.value = 'idle'
+        return
+      }
+      const fresh = await readQuote(targetId)
+      if (pixelId.value !== targetId || confirmedPixelId.value !== targetId) {
+        clearPending()
+        status.value = 'idle'
+        return
+      }
+      if (fresh.nextPrice !== price) {
+        if (!quote.value || quote.value.pixelId !== targetId) {
+          clearPending()
+          status.value = 'idle'
+          return
         }
+        quote.value = toQuote(targetId, fresh.owner, fresh.nextPrice, fresh.previousCredit, paintColor)
         confirmedPrice.value = null
         confirmedPixelId.value = null
-        optimisticColor.value = null
+        clearPending()
         status.value = 'failed'
         message.value = '价格已变化，请重新确认'
         return
@@ -219,10 +322,69 @@ export function usePaintSession() {
       message.value = '已在链上确认'
       clearConfirmation()
     } catch (error) {
-      optimisticColor.value = null
+      clearPending()
       status.value = 'failed'
       message.value = explain(error, '交易失败，已恢复链上颜色')
       if (quote.value) await readChainColor(quote.value.pixelId)
+    } finally {
+      inflight.value = false
+    }
+  }
+
+  async function sendBatch() {
+    const confirmed = confirmedBatch.value
+    if (
+      !confirmed
+      || inflight.value
+      || quoting.value
+      || batchQuoting.value
+      || !batchReady.value
+      || confirmed.ids.length === 0
+    ) return
+    const ids = confirmed.ids.slice()
+    const prices = confirmed.prices.slice()
+    const paintColor = confirmed.color
+    const total = confirmed.total
+    inflight.value = true
+    status.value = 'pending'
+    pendingPaints.value = ids.map((id) => ({ id, color: paintColor }))
+    message.value = '批量交易待确认'
+    try {
+      const fresh = await Promise.all(ids.map((id) => readQuote(id)))
+      if (!confirmedBatch.value || !samePixelIds(ids, confirmedBatch.value.ids)) {
+        clearPending()
+        status.value = 'idle'
+        return
+      }
+      const freshPrices = fresh.map((item) => item.nextPrice)
+      const ownedByMe = fresh.some((item) => account.value && item.owner.toLowerCase() === account.value.address.toLowerCase())
+      if (!batchPricesMatch(prices, freshPrices) || ownedByMe) {
+        batchQuotes.value = fresh.map((item, index) => toQuote(ids[index] ?? 0, item.owner, item.nextPrice, item.previousCredit, paintColor))
+        clearBatchConfirmation()
+        clearPending()
+        status.value = 'failed'
+        message.value = '有像素价格变化或不能购买，整笔未发送'
+        return
+      }
+      const hash = await walletClient().writeContract({
+        address: EMBERGRID_ADDRESS,
+        abi: embergridAbi,
+        functionName: 'paintBatch',
+        args: [ids, ids.map(() => paintColor)],
+        value: total,
+      })
+      txHash.value = hash
+      const receipt = await publicClient.waitForTransactionReceipt({ hash })
+      if (receipt.status !== 'success') throw new Error('批量交易失败')
+      clearBatch()
+      clearPending()
+      await fetchQuote()
+      status.value = 'confirmed'
+      message.value = `批量已在链上确认，共 ${ids.length} 格`
+    } catch (error) {
+      clearPending()
+      status.value = 'failed'
+      message.value = explain(error, '批量失败，链上画布未改变')
     } finally {
       inflight.value = false
     }
@@ -271,9 +433,20 @@ export function usePaintSession() {
     displayColor,
     heldByMe,
     txHash,
+    batchIds,
+    batchQuotes,
+    batchQuoting,
+    batchTotal,
+    batchIncludesMine,
+    batchReady,
+    pendingPaints,
     fetchQuote,
     confirmQuote,
+    toggleBatch,
+    clearBatch,
+    confirmBatch,
     sendPaint,
+    sendBatch,
     withdraw,
     settleRound,
     formatEther,

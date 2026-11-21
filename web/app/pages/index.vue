@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { PALETTE } from '~/lib/palette'
+import { COLOR_NAMES, PALETTE } from '~/lib/palette'
 import { zeroAddress } from 'viem'
 
 const wallet = useDemoWallet()
@@ -34,19 +34,19 @@ const lastPainterLabel = computed(() => {
   return `${painter.slice(0, 6)}…${painter.slice(-4)}`
 })
 
-const pendingPixel = computed(() => {
-  if (paint.status.value !== 'pending' || !paint.quote.value) return null
-  return paint.quote.value.pixelId
-})
-
 function selectPixel(id: number) {
   if (paint.inflight.value) return
   paint.pixelId.value = id
   void paint.fetchQuote()
 }
 
+function onPixelInput(event: Event) {
+  const value = Number((event.target as HTMLInputElement).value)
+  selectPixel(value)
+}
+
 watch(() => paint.status.value, (status) => {
-  if (status === 'confirmed') void grid.sync()
+  if (status === 'confirmed' || status === 'failed') void grid.sync()
 })
 
 watch(() => grid.synced.value, (synced) => {
@@ -95,15 +95,19 @@ function short(address: string) {
     </section>
 
     <div class="grid items-start gap-4 lg:grid-cols-[minmax(0,512px)_1fr]">
-      <PixelCanvas
-        :colors="grid.colors.value"
-        :owned="grid.owned.value"
-        :revision="grid.revision.value"
-        :selected="paint.pixelId.value"
-        :pending-id="pendingPixel"
-        :pending-color="paint.status.value === 'pending' ? paint.color.value : null"
-        @select="selectPixel"
-      />
+      <div>
+        <PixelCanvas
+          :colors="grid.colors.value"
+          :owned="grid.owned.value"
+          :revision="grid.revision.value"
+          :selected="paint.pixelId.value"
+          :batch-ids="paint.batchIds.value"
+          :pending-paints="paint.pendingPaints.value"
+          @select="selectPixel"
+          @toggle-batch="paint.toggleBatch"
+        />
+        <p id="canvas-help" class="mt-2 text-xs text-stone-500">方向键选择像素，Tab 到颜色和确认金额。Shift 点击加入批量，最多 64 格。</p>
+      </div>
 
       <div class="flex flex-col gap-4">
         <section class="rounded-lg border border-stone-200 p-4 text-sm">
@@ -134,14 +138,28 @@ function short(address: string) {
             <button
               v-for="(swatch, index) in PALETTE"
               :key="swatch"
-              class="h-7 w-7 rounded border-2"
+              class="h-7 w-7 rounded border-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900"
               :class="paint.color.value === index ? 'border-stone-900' : 'border-transparent'"
               :style="{ background: swatch }"
               type="button"
+              :aria-label="`颜色 ${COLOR_NAMES[index]}`"
+              :aria-pressed="paint.color.value === index"
+              :title="COLOR_NAMES[index]"
               @click="paint.color.value = index"
             />
           </div>
-          <p class="mt-3">像素 #{{ paint.pixelId.value }}</p>
+          <label class="mt-3 block" for="pixel-number">
+            像素编号
+            <input
+              id="pixel-number"
+              class="ml-2 w-24 rounded border border-stone-300 px-2 py-1"
+              type="number"
+              min="0"
+              max="4095"
+              :value="paint.pixelId.value"
+              @change="onPixelInput"
+            >
+          </label>
           <div v-if="grid.awaitingSettle.value" class="mt-3 space-y-2 rounded border border-amber-300 bg-amber-50 p-3">
             <p class="font-semibold text-amber-900">等待链上结算</p>
             <p>预计获胜者：{{ lastPainterLabel }}</p>
@@ -168,6 +186,35 @@ function short(address: string) {
               </button>
             </div>
           </template>
+          <div class="mt-4 rounded border border-stone-200 p-3">
+            <p class="font-semibold">批量绘图 <span class="font-normal text-stone-500">最多 64 格，一次上链</span></p>
+            <p class="mt-1 text-stone-600">任一格价格变化或不合法时，整笔失败，画布保持链上状态。</p>
+            <div class="mt-2 flex flex-wrap gap-2">
+              <button class="rounded border px-3 py-1.5 disabled:opacity-40" type="button" :disabled="paint.inflight.value" @click="paint.toggleBatch(paint.pixelId.value)">
+                {{ paint.batchIds.value.includes(paint.pixelId.value) ? '移出当前像素' : '加入当前像素' }}
+              </button>
+              <button class="rounded border px-3 py-1.5 disabled:opacity-40" type="button" :disabled="paint.batchIds.value.length === 0 || paint.inflight.value" @click="paint.clearBatch()">
+                清空
+              </button>
+            </div>
+            <p class="mt-2">已选 {{ paint.batchIds.value.length }} / 64</p>
+            <p v-if="paint.batchQuoting.value" class="text-stone-500">正在读取批量报价…</p>
+            <ul v-else class="mt-2 space-y-1">
+              <li v-for="item in paint.batchQuotes.value" :key="item.pixelId">
+                #{{ item.pixelId }} 支付 {{ paint.formatEther(item.nextPrice) }} · 前任 {{ paint.formatEther(item.previousCredit) }} · 奖池 {{ paint.formatEther(item.poolDelta) }} MON
+              </li>
+            </ul>
+            <p v-if="paint.batchQuotes.value.length > 0" class="mt-2 font-semibold">合计支付 {{ paint.formatEther(paint.batchTotal.value) }} MON</p>
+            <p v-if="paint.batchIncludesMine.value" class="font-semibold text-amber-800">批量里包含你已持有的像素</p>
+            <div v-if="grid.synced.value && !grid.awaitingSettle.value" class="mt-3 flex gap-2">
+              <button class="rounded border px-3 py-1.5 disabled:opacity-40" type="button" :disabled="paint.batchQuoting.value || paint.batchIncludesMine.value || paint.batchQuotes.value.length === 0 || paint.inflight.value" @click="paint.confirmBatch()">
+                确认批量金额
+              </button>
+              <button class="rounded bg-orange-700 px-3 py-1.5 text-white disabled:opacity-40" type="button" :disabled="!paint.batchReady.value || paint.batchIncludesMine.value || paint.inflight.value" @click="paint.sendBatch()">
+                {{ paint.inflight.value ? '等待回执…' : '批量购买' }}
+              </button>
+            </div>
+          </div>
           <p class="mt-2">{{ paint.message.value }}</p>
         </section>
       </div>

@@ -17,4 +17,23 @@ export const PALETTE = [
   '#facc15',
 ] as const
 
+export const COLOR_NAMES = [
+  '白',
+  '红',
+  '橙',
+  '黄',
+  '绿',
+  '青绿',
+  '天蓝',
+  '靛蓝',
+  '紫',
+  '粉',
+  '石色',
+  '墨蓝',
+  '黄绿',
+  '青',
+  '玫红',
+  '亮黄',
+] as const
+
 export const EMPTY_PIXEL = '#0c0a09'

@@ -3,6 +3,7 @@ import { parseAbi } from 'viem'
 export const embergridAbi = parseAbi([
   'function quotePaint(uint256 pixelId) view returns (address owner, uint256 nextPrice, uint256 previousOwnerCredit)',
   'function paint(uint256 pixelId, uint8 color) payable',
+  'function paintBatch(uint16[] pixelIds, uint8[] colors) payable',
   'function pixels(uint256 pixelId) view returns (address owner, uint88 price, uint8 color)',
   'function getPixels(uint256 start, uint256 count) view returns (address[] owners, uint88[] prices, uint8[] colors)',
   'function prizePool() view returns (uint256)',
@@ -19,4 +20,6 @@ export const embergridAbi = parseAbi([
   'error InvalidPixelId()',
   'error InvalidColor()',
   'error NothingToWithdraw()',
+  'error InvalidBatch()',
+  'error DuplicatePixelId()',
 ])
