@@ -82,15 +82,17 @@ defineProps<{
 .rules-content li strong { display: block; }
 .rules-content p { margin-top: 14px; font-size: 12px; color: #6b5c50; }
 @media (max-width: 600px) {
-  .masthead { padding-bottom: 14px; align-items: flex-start; }
-  .brand span { display: block; margin: 3px 0 0; font-size: 12px; }
+  .masthead { padding-bottom: 8px; align-items: flex-start; }
+  .brand { font-size: 22px; }
+  .brand span { display: block; margin: 2px 0 0; font-size: 12px; }
   .tagline { display: none; }
   .network-link { font-size: 11px; gap: 6px; padding: 0 9px; }
-  .round-board { grid-template-columns: 1.2fr 1fr; gap: 14px; padding: 16px; }
-  .last-painter { display: flex; align-items: baseline; gap: 10px; grid-column: 1 / -1; border-top: 1px solid #eee8df; padding-top: 11px; }
+  .round-board { grid-template-columns: 1.2fr 1fr; gap: 8px; padding: 10px 12px; }
+  .pool-value, .timer-value { margin-top: 2px; font-size: 22px; }
+  .last-painter { display: flex; align-items: baseline; gap: 8px; grid-column: 1 / -1; border-top: 1px solid #eee8df; padding-top: 8px; }
   .address { margin: 0; font-size: 13px; }
   .chain-state { display: none; }
-  .rules-line { gap: 8px; padding: 4px 0; font-size: 12px; }
-  .rules-line p > span { display: block; }
+  .rules-line { justify-content: flex-end; padding: 2px 0 0; }
+  .rules-line p { display: none; }
 }
 </style>

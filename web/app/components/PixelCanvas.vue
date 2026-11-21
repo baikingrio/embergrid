@@ -155,7 +155,7 @@ watch(() => props.selected, revealSelection)
         <button type="button" aria-label="放大画布" :disabled="zoom === 8" @click="changeZoom(zoom * 2)">+</button>
       </div>
     </div>
-    <div ref="viewport" class="canvas-viewport" :class="{ drawing: mode === 'draw' }">
+    <div ref="viewport" class="canvas-viewport" :style="{ overscrollBehavior: zoom > 1 ? 'contain' : 'auto' }">
       <canvas
         ref="canvas"
         class="pixel-canvas"
@@ -195,7 +195,7 @@ watch(() => props.selected, revealSelection)
 .zoom-controls button { border: 1px solid #ded8d0; background: #fff; }
 .zoom-controls button:disabled { opacity: .4; }
 .canvas-toolbar button:focus-visible { outline: 2px solid #a63e1c; outline-offset: 3px; }
-.canvas-viewport { position: relative; width: 100%; aspect-ratio: 1; overflow: auto; border-radius: 12px; background: #0c0a09; border: 1px solid #3c322a; overscroll-behavior: contain; }
+.canvas-viewport { position: relative; width: 100%; aspect-ratio: 1; overflow: auto; border-radius: 12px; background: #0c0a09; border: 1px solid #3c322a; }
 .pixel-canvas { display: block; max-width: none; height: auto; image-rendering: pixelated; cursor: crosshair; }
 .pixel-canvas:focus-visible { outline: 2px solid #fbbf24; outline-offset: -3px; }
 .empty-canvas { position: absolute; top: 44%; left: 0; right: 0; display: grid; gap: 9px; text-align: center; color: #e6d5bb; pointer-events: none; }

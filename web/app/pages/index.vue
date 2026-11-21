@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { COLOR_NAMES, PALETTE } from '~/lib/palette'
+import { paintBudget } from '~/lib/paintBudget'
 import { zeroAddress } from 'viem'
 
 const wallet = useDemoWallet()
@@ -59,6 +60,37 @@ watch(() => paint.status.value, (status) => {
 
 watch(() => grid.synced.value, (synced) => {
   if (synced) void paint.fetchQuote()
+})
+
+const funds = computed(() => {
+  const batchCount = paint.batchIds.value.length
+  const batchReady = batchCount > 0 && paint.batchQuotes.value.length === batchCount
+  const single = paint.quote.value?.pixelId === paint.pixelId.value ? paint.quote.value : null
+  if (!grid.synced.value) return null
+  if (batchReady) {
+    return {
+      count: batchCount,
+      payment: paint.batchTotal.value,
+      ...paintBudget(batchCount, paint.batchTotal.value, grid.balance.value, grid.baseFee.value),
+    }
+  }
+  if (batchCount === 0 && single) {
+    return {
+      count: 1,
+      payment: single.nextPrice,
+      ...paintBudget(1, single.nextPrice, grid.balance.value, grid.baseFee.value),
+    }
+  }
+  return null
+})
+
+const fundsNote = computed(() => {
+  const current = funds.value
+  if (!current?.short) return ''
+  const claim = '再领 0.2 MON'
+  if (current.count >= 64) return `余额不够支付这 64 格和 Gas。缩小选区，或${claim}。一次领取通常不够买满 64 格。`
+  if (current.count > 1) return `余额不够支付这 ${current.count} 格和 Gas。缩小选区，或${claim}。`
+  return `余额不够支付这一格和 Gas。可以先${claim}。`
 })
 
 function short(address: string) {
@@ -253,30 +285,37 @@ async function claim() {
 
     <div class="action-dock">
       <div class="action-dock-inner">
-        <p aria-live="polite">{{ paint.message.value || '选择像素后确认金额' }}</p>
-        <template v-if="paint.batchIds.value.length > 0">
+        <p aria-live="polite">{{ grid.awaitingSettle.value ? '本轮已到期。结算后才能继续购买。' : (paint.message.value || '选择像素后确认金额') }}</p>
+        <div v-if="grid.awaitingSettle.value">
+          <button class="rounded bg-amber-800 px-3 py-1.5 text-white disabled:opacity-40" type="button" :disabled="paint.inflight.value" @click="paint.settleRound()">
+            {{ paint.inflight.value ? '等待回执…' : '结算本轮' }}
+          </button>
+        </div>
+        <template v-else-if="paint.batchIds.value.length > 0">
           <p>已选 {{ paint.batchIds.value.length }} / 64</p>
           <p v-if="paint.batchQuoting.value" class="text-stone-500">正在读取批量报价…</p>
-          <p v-else-if="paint.batchQuotes.value.length === paint.batchIds.value.length && paint.batchQuotes.value.length > 0" class="font-semibold">
-            合计支付 {{ paint.formatEther(paint.batchTotal.value) }} MON
+          <p v-else-if="funds && funds.count > 1" class="font-semibold">
+            合计支付 {{ paint.formatEther(funds.payment) }} MON · 余额 {{ paint.formatEther(grid.balance.value) }} · Gas 预算 {{ paint.formatEther(funds.gas) }}
           </p>
+          <p v-if="fundsNote && paint.batchIds.value.length > 0" class="funds-note">{{ fundsNote }}</p>
           <p v-if="paint.batchIncludesMine.value" class="font-semibold text-amber-800">批量里包含你已持有的像素</p>
           <div v-if="grid.synced.value && !grid.awaitingSettle.value" class="flex gap-2">
-            <button class="rounded border px-3 py-1.5 disabled:opacity-40" type="button" :disabled="paint.batchQuoting.value || paint.batchIncludesMine.value || paint.batchQuotes.value.length !== paint.batchIds.value.length || paint.batchQuotes.value.length === 0 || paint.inflight.value" @click="paint.confirmBatch()">
+            <button class="rounded border px-3 py-1.5 disabled:opacity-40" type="button" :disabled="paint.batchQuoting.value || paint.batchIncludesMine.value || paint.batchQuotes.value.length !== paint.batchIds.value.length || paint.batchQuotes.value.length === 0 || paint.inflight.value || funds?.short" @click="paint.confirmBatch()">
               确认批量金额
             </button>
-            <button class="rounded bg-orange-700 px-3 py-1.5 text-white disabled:opacity-40" type="button" :disabled="!paint.batchReady.value || paint.batchIncludesMine.value || paint.inflight.value" @click="paint.sendBatch()">
+            <button class="rounded bg-orange-700 px-3 py-1.5 text-white disabled:opacity-40" type="button" :disabled="!paint.batchReady.value || paint.batchIncludesMine.value || paint.inflight.value || funds?.short" @click="paint.sendBatch()">
               {{ paint.inflight.value ? '等待回执…' : '批量购买' }}
             </button>
           </div>
         </template>
         <template v-else-if="grid.synced.value && paint.quote.value && paint.quote.value.pixelId === paint.pixelId.value && !grid.awaitingSettle.value">
-          <p>下一口价 {{ paint.formatEther(paint.quote.value.nextPrice) }} MON</p>
+          <p>合计支付 {{ paint.formatEther(paint.quote.value.nextPrice) }} MON · 余额 {{ paint.formatEther(grid.balance.value) }} · Gas 预算 {{ funds ? paint.formatEther(funds.gas) : '…' }}</p>
+          <p v-if="fundsNote" class="funds-note">{{ fundsNote }}</p>
           <div class="flex gap-2">
-            <button class="rounded border px-3 py-1.5 disabled:opacity-40" type="button" :disabled="paint.quoting.value || paint.heldByMe.value || paint.inflight.value" @click="paint.confirmQuote()">
+            <button class="rounded border px-3 py-1.5 disabled:opacity-40" type="button" :disabled="paint.quoting.value || paint.heldByMe.value || paint.inflight.value || funds?.short" @click="paint.confirmQuote()">
               确认金额
             </button>
-            <button class="rounded bg-orange-700 px-3 py-1.5 text-white disabled:opacity-40" type="button" :disabled="paint.quoting.value || paint.confirmedPrice.value === null || paint.confirmedPixelId.value !== paint.pixelId.value || paint.heldByMe.value || paint.inflight.value" @click="paint.sendPaint()">
+            <button class="rounded bg-orange-700 px-3 py-1.5 text-white disabled:opacity-40" type="button" :disabled="paint.quoting.value || paint.confirmedPrice.value === null || paint.confirmedPixelId.value !== paint.pixelId.value || paint.heldByMe.value || paint.inflight.value || funds?.short" @click="paint.sendPaint()">
               {{ paint.inflight.value ? '等待回执…' : '购买' }}
             </button>
           </div>
@@ -291,6 +330,7 @@ async function claim() {
 .action-dock { position: fixed; right: 0; bottom: 0; left: 0; z-index: 20; border-top: 1px solid #ded8d0; background: rgb(255 253 249 / 96%); padding: 12px 16px max(12px, env(safe-area-inset-bottom)); }
 .action-dock-inner { max-width: 1120px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
 .action-dock button { min-height: 44px; }
+.funds-note { color: #8a3d16; line-height: 1.5; }
 .batch-details { max-height: 12rem; margin-top: 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
 .play-layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(340px, 1fr); align-items: start; gap: 24px; margin-top: 12px; }
 .canvas-column, .control-column { min-width: 0; }
@@ -312,11 +352,12 @@ async function claim() {
 .wallet-balances p { margin: 0; }
 .wallet-actions { display: flex; gap: 8px; }
 .wallet-actions button { margin-top: 0; flex: 1; }
-.wallet-panel button, .purchase-actions button, .connection-error button { min-height: 44px; }
+.wallet-panel button, .connection-error button { min-height: 44px; }
 .wallet-notice { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 10px 14px; background: #fcf0d7; border-radius: 10px; color: #68471c; font-size: 12px; margin-bottom: 14px; }
 .wallet-notice button { flex-shrink: 0; min-height: 44px; margin: 0; }
 .connection-error { padding: 16px; margin-bottom: 14px; background: #fff0eb; color: #913a22; border-radius: 10px; }
 .selection-panel { padding: 20px; border: 1px solid #ded8d0; background: #fff; border-radius: 14px; font-size: 13px; }
+.selection-panel button { min-height: 44px; }
 .color-palette { display: grid; grid-template-columns: repeat(auto-fit, minmax(44px, 1fr)); gap: 7px; margin-bottom: 18px; }
 .color-swatch { min-width: 44px; height: 44px; border-radius: 7px; border: 3px solid #fff; box-shadow: inset 0 0 0 1px #29221e20; }
 .color-swatch.selected { outline: 2px solid #29221e; outline-offset: 0; }
@@ -326,7 +367,6 @@ async function claim() {
 .next-price { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; margin-bottom: 12px; }
 .next-price strong { font-size: 24px; font-variant-numeric: tabular-nums; color: #a63e1c; }
 .next-price strong span { font-size: 12px; font-weight: 500; }
-.purchase-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 16px; }
 .transaction-status { margin-top: 14px; color: #6b5c50; overflow-wrap: anywhere; }
 .transaction-link { display: inline-flex; align-items: center; min-height: 44px; color: #93401e; text-decoration: underline; text-underline-offset: 4px; }
 .trade-feed { border-top: 1px solid #ded8d0; padding-top: 22px; margin-top: 28px; }

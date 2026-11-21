@@ -27,6 +27,7 @@ export function useGridState() {
   const lastPainter = ref<Address>(zeroAddress)
   const endTime = ref(0)
   const chainNow = ref(0)
+  const baseFee = ref(100_000_000_000n)
   const balance = ref(0n)
   const pending = ref(0n)
   const trades = ref<TradeRow[]>([])
@@ -114,6 +115,7 @@ export function useGridState() {
     lastPainter.value = painter
     endTime.value = Number(end)
     chainNow.value = Number(block.timestamp)
+    if (block.baseFeePerGas && block.baseFeePerGas > 0n) baseFee.value = block.baseFeePerGas
   }
 
   async function syncAccount() {
@@ -305,6 +307,7 @@ export function useGridState() {
     lastPainter,
     endTime,
     chainNow,
+    baseFee,
     awaitingSettle,
     winnerCredit,
     rollover,
