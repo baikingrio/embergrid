@@ -16,6 +16,7 @@
     "viem": "^2.58.4"
   },
   "devDependencies": {
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "vue-tsc": "^3.3.14"
   }
 }

@@ -10,12 +10,8 @@ export default defineNuxtConfig({
   devtools: { enabled: true },
   runtimeConfig: {
     public: {
-      monadRpcUrl:
-        process.env.NUXT_PUBLIC_MONAD_RPC_URL ?? MONAD_TESTNET_RPC_URL,
-      monadChainId: Number(
-        process.env.NUXT_PUBLIC_MONAD_CHAIN_ID ?? MONAD_TESTNET_CHAIN_ID,
-      ),
+      monadRpcUrl: MONAD_TESTNET_RPC_URL,
+      monadChainId: MONAD_TESTNET_CHAIN_ID,
     },
   },
-  transpile: ['@embergrid/shared'],
 })
