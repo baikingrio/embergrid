@@ -6,11 +6,12 @@ import {
   type Address,
   type Hex,
 } from 'viem'
-import { EMBERGRID_ADDRESS, createMonadPublicClient, monadTestnet, monadTransport } from '@embergrid/shared'
+import { EMBERGRID_ADDRESS, MONAD_POLLING_INTERVAL_MS, createMonadPublicClient, monadTestnet, monadTransport } from '@embergrid/shared'
 import { addBatchIds as includeBatchIds, batchPricesMatch, samePixelIds, staleBatchIds, toggleBatchId } from '~/lib/batchSelection'
 import { embergridAbi } from '~/lib/embergridAbi'
 import { PALETTE } from '~/lib/palette'
 import { createQuoteRequests } from '~/lib/quoteRequests'
+import { publishRoundSnapshot, roundLikelyDue } from '~/lib/roundSnapshot'
 
 export type PaintQuote = {
   pixelId: number
@@ -26,6 +27,7 @@ const ZERO = zeroAddress
 function explain(error: unknown, fallback: string) {
   const text = error instanceof Error ? error.message : ''
   if (text.includes('RoundAwaitingSettle')) return '本轮已到期，请先结算后再购买'
+  if (text.includes('RoundNotDue')) return '本轮尚未到期'
   if (text.includes('CannotBuyOwnPixel')) return '不能购买自己持有的像素'
   if (text.includes('IncorrectPayment')) return '价格已变化，请重新确认'
   if (text.includes('NothingToWithdraw')) return '没有可领取余额'
@@ -102,6 +104,13 @@ export function usePaintSession() {
     })
   }
 
+  function waitReceipt(hash: Hex) {
+    return publicClient.waitForTransactionReceipt({
+      hash,
+      pollingInterval: MONAD_POLLING_INTERVAL_MS,
+    })
+  }
+
   async function readChainColor(id: number) {
     const pixel = await publicClient.readContract({
       address: EMBERGRID_ADDRESS,
@@ -159,20 +168,48 @@ export function usePaintSession() {
     quoting.value = true
     message.value = '正在报价…'
     try {
-      const priced = await readQuote(id)
+      const [priced, pixel] = await Promise.all([
+        readQuote(id),
+        publicClient.readContract({
+          address: EMBERGRID_ADDRESS,
+          abi: embergridAbi,
+          functionName: 'pixels',
+          args: [BigInt(id)],
+        }),
+      ])
       if (!ticket.isCurrent(pixelId.value)) return
       quote.value = toQuote(id, priced.owner, priced.nextPrice, priced.previousCredit, color.value)
+      chainColor.value = pixel[2]
       clearPending()
       status.value = 'idle'
       message.value = priced.owner === ZERO ? '首次购买，支付金额全部进入奖池' : '请确认金额后再发送'
       txHash.value = null
-      await readChainColor(id)
     } catch (error) {
       if (!ticket.isCurrent(pixelId.value)) return
       quote.value = null
       message.value = explain(error, '报价读取失败')
     } finally {
       if (ticket.isCurrent(pixelId.value)) quoting.value = false
+    }
+  }
+
+  async function refreshQuoteAfterPaint(id: number) {
+    try {
+      const [priced, pixel] = await Promise.all([
+        readQuote(id),
+        publicClient.readContract({
+          address: EMBERGRID_ADDRESS,
+          abi: embergridAbi,
+          functionName: 'pixels',
+          args: [BigInt(id)],
+        }),
+      ])
+      if (pixelId.value !== id) return
+      quote.value = toQuote(id, priced.owner, priced.nextPrice, priced.previousCredit, color.value)
+      chainColor.value = pixel[2]
+      clearPending()
+    } catch {
+      if (pixelId.value === id) await readChainColor(id).catch(() => {})
     }
   }
 
@@ -309,7 +346,7 @@ export function usePaintSession() {
         functionName: 'withdraw',
       })
       txHash.value = hash
-      const receipt = await publicClient.waitForTransactionReceipt({ hash })
+      const receipt = await waitReceipt(hash)
       if (receipt.status !== 'success') throw new Error('提现失败')
       status.value = 'confirmed'
       message.value = '提现已确认'
@@ -336,7 +373,7 @@ export function usePaintSession() {
       functionName: 'settleRound',
     })
     txHash.value = hash
-    const receipt = await publicClient.waitForTransactionReceipt({ hash })
+    const receipt = await waitReceipt(hash)
     if (receipt.status !== 'success') throw new Error('结算失败')
     const settled = parseEventLogs({
       abi: embergridAbi,
@@ -348,29 +385,21 @@ export function usePaintSession() {
     const rollover = settled?.args.rollover ?? remainder - expectedWinner
     const winner = settled?.args.winner ?? zeroAddress
     const settler = settled?.args.settler ?? account.value?.address ?? zeroAddress
+    publishRoundSnapshot({ lastPainter: zeroAddress, endTime: 0 })
     return { winner, settler, settlerCredit, credit: winnerCredit, rollover }
   }
 
   async function settleIfDue() {
-    const [painter, end] = await Promise.all([
-      publicClient.readContract({
-        address: EMBERGRID_ADDRESS,
-        abi: embergridAbi,
-        functionName: 'lastPainter',
-      }),
-      publicClient.readContract({
-        address: EMBERGRID_ADDRESS,
-        abi: embergridAbi,
-        functionName: 'endTime',
-      }),
-    ])
-    if (painter === zeroAddress || end === 0n) return true
-    const block = await publicClient.getBlock()
-    if (block.timestamp < end) return true
+    if (!roundLikelyDue()) return
     message.value = '本轮已到期，先结算再购买…'
-    settleResult.value = await executeSettle()
-    message.value = '已结算，继续购买…'
-    return true
+    try {
+      settleResult.value = await executeSettle()
+      message.value = '已结算，继续购买…'
+    } catch (error) {
+      const text = error instanceof Error ? error.message : ''
+      if (text.includes('RoundNotDue')) return
+      throw error
+    }
   }
 
   async function sendPaint() {
@@ -429,15 +458,15 @@ export function usePaintSession() {
         value: price,
       })
       txHash.value = hash
-      const receipt = await publicClient.waitForTransactionReceipt({ hash })
+      const receipt = await waitReceipt(hash)
       if (receipt.status !== 'success') {
         throw new Error('交易失败')
       }
-      await fetchQuote()
       settleResult.value = null
       status.value = 'confirmed'
       message.value = '已在链上确认'
       clearConfirmation()
+      void refreshQuoteAfterPaint(targetId)
     } catch (error) {
       clearPending()
       status.value = 'failed'
@@ -492,14 +521,14 @@ export function usePaintSession() {
         value: total,
       })
       txHash.value = hash
-      const receipt = await publicClient.waitForTransactionReceipt({ hash })
+      const receipt = await waitReceipt(hash)
       if (receipt.status !== 'success') throw new Error('批量交易失败')
       clearBatch()
       clearPending()
       settleResult.value = null
-      await fetchQuote()
       status.value = 'confirmed'
       message.value = `批量已在链上确认，共 ${ids.length} 格`
+      void refreshQuoteAfterPaint(pixelId.value)
     } catch (error) {
       clearPending()
       status.value = 'failed'

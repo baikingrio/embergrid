@@ -4,6 +4,7 @@ import { mergeCanvasSnapshot, type CanvasSnapshot } from '~/lib/canvasSnapshot'
 import { embergridAbi } from '~/lib/embergridAbi'
 import { createGridSyncController } from '~/lib/gridSync'
 import { selectCanvasUpdates, type CanvasUpdates, type CanvasPaint } from '~/lib/canvasUpdates'
+import { publishRoundSnapshot } from '~/lib/roundSnapshot'
 
 export type TradeRow = {
   hash: Hex
@@ -121,6 +122,7 @@ export function useGridState() {
     lastPainter.value = painter
     endTime.value = Number(end)
     chainNow.value = Number(block.timestamp)
+    publishRoundSnapshot({ lastPainter: painter, endTime: Number(end) })
     if (block.baseFeePerGas && block.baseFeePerGas > 0n) baseFee.value = block.baseFeePerGas
   }
 

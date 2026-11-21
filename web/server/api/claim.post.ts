@@ -1,6 +1,6 @@
-import { createPublicClient, createWalletClient, isAddress, type Hex } from 'viem'
+import { createWalletClient, isAddress, type Hex } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
-import { monadTestnet, monadTransport } from '@embergrid/shared'
+import { MONAD_POLLING_INTERVAL_MS, createMonadPublicClient, monadTestnet, monadTransport } from '@embergrid/shared'
 import { describeFaucetFailure } from '../utils/faucetFailure'
 
 const faucetAbi = [
@@ -33,7 +33,7 @@ export default defineEventHandler(async (event) => {
 
   const account = privateKeyToAccount(key as Hex)
   const transport = monadTransport()
-  const publicClient = createPublicClient({ chain: monadTestnet, transport })
+  const publicClient = createMonadPublicClient()
   const wallet = createWalletClient({ account, chain: monadTestnet, transport })
 
   try {
@@ -47,7 +47,10 @@ export default defineEventHandler(async (event) => {
       functionName: 'drip',
       args: [address],
     })
-    const receipt = await publicClient.waitForTransactionReceipt({ hash })
+    const receipt = await publicClient.waitForTransactionReceipt({
+      hash,
+      pollingInterval: MONAD_POLLING_INTERVAL_MS,
+    })
     if (receipt.status !== 'success') {
       throw createError({ statusCode: 500, statusMessage: '领取失败' })
     }
