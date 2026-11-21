@@ -3,6 +3,8 @@ useHead({
   title: '介绍 · 领地争夺战',
 })
 
+const projectUrl = 'https://embergrid-zeta.vercel.app'
+
 const leads = [
   {
     title: '核心',
@@ -41,8 +43,17 @@ const beats = [
 <template>
   <main class="intro">
     <header class="intro-header">
-      <h1>领地争夺战</h1>
-      <p class="tagline">像素领地上的最后一笔争夺</p>
+      <div>
+        <h1>领地争夺战</h1>
+        <p class="tagline">像素领地上的最后一笔争夺</p>
+      </div>
+      <aside class="project-access" aria-label="扫码访问项目">
+        <a class="qr-entry" :href="projectUrl">
+          <img src="/project-qr.svg" alt="领地争夺战公开演示二维码" width="180" height="180">
+          <span>扫码进入画布</span>
+        </a>
+        <a class="project-url" :href="projectUrl">{{ projectUrl }}</a>
+      </aside>
     </header>
     <section class="lead" aria-label="核心、上手与 Monad">
       <article v-for="lead in leads" :key="lead.title">
@@ -71,6 +82,12 @@ const beats = [
   flex-direction: column;
   gap: 12px;
 }
+.intro-header { display: flex; justify-content: space-between; align-items: center; gap: 24px; }
+.project-access { flex-shrink: 0; text-align: center; }
+.qr-entry { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; color: #29221e; font-size: 14px; font-weight: 600; }
+.qr-entry img { display: block; background: #fff; }
+.project-url { display: block; min-height: 44px; align-content: center; font-size: 12px; color: #765338; text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+.qr-entry:focus-visible, .project-url:focus-visible { outline: 2px solid #a63e1c; outline-offset: 3px; }
 .intro-header h1 { font-size: 34px; font-weight: 800; letter-spacing: -.035em; line-height: 1.15; }
 .tagline { margin-top: 4px; color: #6b5c50; font-size: 16px; }
 .lead, .beats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -96,6 +113,8 @@ const beats = [
 .enter:focus-visible { outline: 2px solid #a63e1c; outline-offset: 3px; }
 @media (max-width: 800px) {
   .intro { min-height: auto; padding: max(20px, env(safe-area-inset-top)) 16px 32px; }
+  .intro-header { flex-direction: column; align-items: flex-start; gap: 16px; }
+  .project-access { align-self: center; }
   .intro-header h1 { font-size: 32px; }
   .lead, .beats { grid-template-columns: 1fr; }
   .lead h2, .beats h2 { font-size: 22px; }
