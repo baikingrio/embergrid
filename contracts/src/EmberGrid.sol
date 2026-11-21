@@ -56,6 +56,8 @@ contract EmberGrid {
     event RoundSettled(
         uint256 indexed roundId,
         address indexed winner,
+        address settler,
+        uint256 settlerCredit,
         uint256 winnerCredit,
         uint256 rollover
     );
@@ -133,18 +135,21 @@ contract EmberGrid {
         }
 
         uint256 pool = prizePool;
-        uint256 winnerCredit = (pool * 80) / 100;
-        uint256 rollover = pool - winnerCredit;
+        uint256 settlerCredit = (pool * 1) / 100;
+        uint256 remainder = pool - settlerCredit;
+        uint256 winnerCredit = (remainder * 80) / 100;
+        uint256 rollover = remainder - winnerCredit;
         address winner = lastPainter;
         uint256 settledRoundId = roundId;
 
         prizePool = rollover;
+        pendingWithdrawals[msg.sender] += settlerCredit;
         pendingWithdrawals[winner] += winnerCredit;
         roundId = settledRoundId + 1;
         lastPainter = address(0);
         endTime = 0;
 
-        emit RoundSettled(settledRoundId, winner, winnerCredit, rollover);
+        emit RoundSettled(settledRoundId, winner, msg.sender, settlerCredit, winnerCredit, rollover);
     }
 
     function withdraw() external nonReentrant {

@@ -13,7 +13,7 @@ export const embergridAbi = parseAbi([
   'function withdraw()',
   'function settleRound()',
   'event Painted(uint256 indexed roundId, uint256 indexed pixelId, address indexed previousOwner, address newOwner, uint8 color, uint256 payment, uint256 previousOwnerCredit, uint256 prizePoolDelta)',
-  'event RoundSettled(uint256 indexed roundId, address indexed winner, uint256 winnerCredit, uint256 rollover)',
+  'event RoundSettled(uint256 indexed roundId, address indexed winner, address settler, uint256 settlerCredit, uint256 winnerCredit, uint256 rollover)',
   'error IncorrectPayment()',
   'error CannotBuyOwnPixel()',
   'error RoundAwaitingSettle()',

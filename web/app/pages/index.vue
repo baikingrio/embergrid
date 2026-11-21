@@ -135,7 +135,9 @@ const fundsNote = computed(() => {
 })
 
 const dockSummary = computed(() => {
-  if (grid.awaitingSettle.value) return ''
+  if (grid.awaitingSettle.value) {
+    return `本轮已到期。购买前会先结算；结算补偿约 ${grid.formatEther(grid.settlerCredit.value)} MON（1%）。`
+  }
   if (paint.batchIds.value.length > 0) {
     if (paint.batchQuoting.value) return '正在读取批量报价…'
     if (funds.value && funds.value.count > 1) {
@@ -291,19 +293,19 @@ async function claim() {
           </details>
           <div v-if="paint.settleResult.value" class="mt-3 space-y-2 rounded border border-emerald-300 bg-emerald-50 p-3">
             <p class="font-semibold text-emerald-950">本轮已结算</p>
-            <p>获胜者：{{ short(paint.settleResult.value.winner) }}</p>
-            <p>已记入可领取余额：{{ paint.formatEther(paint.settleResult.value.credit) }} MON（80%）</p>
-            <p>滚存：{{ paint.formatEther(paint.settleResult.value.rollover) }} MON（20%）</p>
+            <p>最后争夺者：{{ short(paint.settleResult.value.winner) }}</p>
+            <p>结算补偿：{{ paint.formatEther(paint.settleResult.value.settlerCredit) }} MON（1%）→ {{ short(paint.settleResult.value.settler) }}</p>
+            <p>已记入可领取余额：{{ paint.formatEther(paint.settleResult.value.credit) }} MON（剩余的 80%）</p>
+            <p>滚存：{{ paint.formatEther(paint.settleResult.value.rollover) }} MON</p>
             <p>可以开启下一轮。</p>
           </div>
           <div v-if="grid.awaitingSettle.value" class="mt-3 space-y-2 rounded border border-amber-300 bg-amber-50 p-3">
-            <p class="font-semibold text-amber-900">等待链上结算</p>
-            <p>预计获胜者：{{ lastPainterLabel }}</p>
-            <p>预计奖励：{{ grid.formatEther(grid.winnerCredit.value) }} MON（80%）</p>
+            <p class="font-semibold text-amber-900">本轮已到期</p>
+            <p>预计最后争夺者：{{ lastPainterLabel }}</p>
+            <p>结算补偿：{{ grid.formatEther(grid.settlerCredit.value) }} MON（1%）</p>
+            <p>预计记入可领取余额：{{ grid.formatEther(grid.winnerCredit.value) }} MON（剩余的 80%）</p>
             <p>滚存：{{ grid.formatEther(grid.rollover.value) }} MON</p>
-            <button class="rounded bg-amber-800 px-3 py-1.5 text-white disabled:opacity-40" type="button" :disabled="paint.inflight.value" @click="paint.settleRound()">
-              {{ paint.inflight.value ? '等待回执…' : '结算本轮' }}
-            </button>
+            <p class="text-amber-900/80">购买会先代发结算；也可在下方明细里单独结算。</p>
           </div>
           <p v-if="grid.loading.value" class="text-stone-500">正在读取画布…</p>
           <p v-else-if="!grid.synced.value" class="text-red-700">画布尚未同步</p>
@@ -362,24 +364,28 @@ async function claim() {
       <div class="action-dock-inner">
         <details class="dock-details">
           <summary>
-            <strong>{{ grid.awaitingSettle.value ? '等待结算' : funds ? `${paint.formatEther(funds.payment)} MON` : '等待报价' }}</strong>
+            <strong>{{ funds ? `${paint.formatEther(funds.payment)} MON` : '等待报价' }}</strong>
             <span>明细</span>
           </summary>
           <div class="dock-detail-content">
-            <p>{{ grid.awaitingSettle.value ? '本轮已到期。结算后才能继续购买。' : (paint.message.value || '选择像素后确认金额') }}</p>
+            <p>{{ paint.message.value || '选择像素后确认金额' }}</p>
             <p v-if="paint.batchIds.value.length">已选 {{ paint.batchIds.value.length }} / 64 格</p>
             <p>{{ dockSummary }}</p>
             <p v-if="fundsNote">{{ fundsNote }}</p>
             <p v-if="paint.batchIncludesMine.value">批量里包含你已持有的像素</p>
+            <button
+              v-if="grid.awaitingSettle.value"
+              class="mt-2 rounded border border-amber-800/40 bg-amber-50 px-3 py-1.5 text-amber-950 disabled:opacity-40"
+              type="button"
+              :disabled="paint.inflight.value"
+              @click="paint.settleRound()"
+            >
+              {{ paint.inflight.value ? '等待回执…' : '仅结算本轮' }}
+            </button>
           </div>
         </details>
         <div class="dock-actions flex gap-2">
-          <template v-if="grid.awaitingSettle.value">
-            <button class="rounded bg-amber-800 px-3 py-1.5 text-white disabled:opacity-40" type="button" :disabled="paint.inflight.value" @click="paint.settleRound()">
-              {{ paint.inflight.value ? '等待回执…' : '结算本轮' }}
-            </button>
-          </template>
-          <template v-else-if="paint.batchIds.value.length > 0">
+          <template v-if="paint.batchIds.value.length > 0">
             <button class="rounded border px-3 py-1.5 disabled:opacity-40" type="button" :disabled="!grid.synced.value || paint.batchQuoting.value || paint.batchIncludesMine.value || paint.batchQuotes.value.length !== paint.batchIds.value.length || paint.batchQuotes.value.length === 0 || paint.inflight.value || funds?.short" @click="paint.confirmBatch()">
               确认批量金额
             </button>

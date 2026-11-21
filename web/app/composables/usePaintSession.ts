@@ -64,7 +64,13 @@ export function usePaintSession() {
   const batchQuoting = shallowRef(false)
   const confirmedBatch = ref<{ ids: number[], prices: bigint[], color: number, total: bigint } | null>(null)
   const pendingPaints = ref<{ id: number, color: number }[]>([])
-  const settleResult = ref<{ winner: Address, credit: bigint, rollover: bigint } | null>(null)
+  const settleResult = ref<{
+    winner: Address
+    settler: Address
+    settlerCredit: bigint
+    credit: bigint
+    rollover: bigint
+  } | null>(null)
   const batchQuoteCache = new Map<number, { quote: PaintQuote, at: number }>()
   const batchQuoteTtlMs = 20_000
   let batchTicket = 0
@@ -315,6 +321,58 @@ export function usePaintSession() {
     }
   }
 
+  async function executeSettle() {
+    const pool = await publicClient.readContract({
+      address: EMBERGRID_ADDRESS,
+      abi: embergridAbi,
+      functionName: 'prizePool',
+    })
+    const tip = (pool * 1n) / 100n
+    const remainder = pool - tip
+    const expectedWinner = (remainder * 80n) / 100n
+    const hash = await walletClient().writeContract({
+      address: EMBERGRID_ADDRESS,
+      abi: embergridAbi,
+      functionName: 'settleRound',
+    })
+    txHash.value = hash
+    const receipt = await publicClient.waitForTransactionReceipt({ hash })
+    if (receipt.status !== 'success') throw new Error('结算失败')
+    const settled = parseEventLogs({
+      abi: embergridAbi,
+      logs: receipt.logs,
+      eventName: 'RoundSettled',
+    })[0]
+    const winnerCredit = settled?.args.winnerCredit ?? expectedWinner
+    const settlerCredit = settled?.args.settlerCredit ?? tip
+    const rollover = settled?.args.rollover ?? remainder - expectedWinner
+    const winner = settled?.args.winner ?? zeroAddress
+    const settler = settled?.args.settler ?? account.value?.address ?? zeroAddress
+    return { winner, settler, settlerCredit, credit: winnerCredit, rollover }
+  }
+
+  async function settleIfDue() {
+    const [painter, end] = await Promise.all([
+      publicClient.readContract({
+        address: EMBERGRID_ADDRESS,
+        abi: embergridAbi,
+        functionName: 'lastPainter',
+      }),
+      publicClient.readContract({
+        address: EMBERGRID_ADDRESS,
+        abi: embergridAbi,
+        functionName: 'endTime',
+      }),
+    ])
+    if (painter === zeroAddress || end === 0n) return true
+    const block = await publicClient.getBlock()
+    if (block.timestamp < end) return true
+    message.value = '本轮已到期，先结算再购买…'
+    settleResult.value = await executeSettle()
+    message.value = '已结算，继续购买…'
+    return true
+  }
+
   async function sendPaint() {
     const targetId = pixelId.value
     if (
@@ -336,6 +394,7 @@ export function usePaintSession() {
     optimisticColor.value = paintColor
     message.value = '交易待确认'
     try {
+      await settleIfDue()
       if (pixelId.value !== targetId || confirmedPixelId.value !== targetId) {
         clearPending()
         status.value = 'idle'
@@ -408,6 +467,7 @@ export function usePaintSession() {
     pendingPaints.value = ids.map((id) => ({ id, color: paintColor }))
     message.value = '批量交易待确认'
     try {
+      await settleIfDue()
       const fresh = await Promise.all(ids.map((id) => readQuote(id)))
       if (!confirmedBatch.value || !samePixelIds(ids, confirmedBatch.value.ids)) {
         clearPending()
@@ -455,29 +515,7 @@ export function usePaintSession() {
     status.value = 'pending'
     message.value = '结算待确认'
     try {
-      const pool = await publicClient.readContract({
-        address: EMBERGRID_ADDRESS,
-        abi: embergridAbi,
-        functionName: 'prizePool',
-      })
-      const credit = (pool * 80n) / 100n
-      const hash = await walletClient().writeContract({
-        address: EMBERGRID_ADDRESS,
-        abi: embergridAbi,
-        functionName: 'settleRound',
-      })
-      txHash.value = hash
-      const receipt = await publicClient.waitForTransactionReceipt({ hash })
-      if (receipt.status !== 'success') throw new Error('结算失败')
-      const settled = parseEventLogs({
-        abi: embergridAbi,
-        logs: receipt.logs,
-        eventName: 'RoundSettled',
-      })[0]
-      const winnerCredit = settled?.args.winnerCredit ?? credit
-      const rollover = settled?.args.rollover ?? pool - credit
-      const winner = settled?.args.winner ?? zeroAddress
-      settleResult.value = { winner, credit: winnerCredit, rollover }
+      settleResult.value = await executeSettle()
       status.value = 'confirmed'
       message.value = '结算完成。可以开启下一轮。'
     } catch (error) {

@@ -1,9 +1,9 @@
 # 领地争夺战提交清单
 
-领地争夺战是一款 Monad 测试网上的像素领地争夺游戏。玩家以递增价格夺取像素，前任持有者获得合约记录的回款，差额进入全局奖池。每次有效争夺刷新 180 秒倒计时，到期后最后争夺者可领取 80% 奖池，余款滚存。
+领地争夺战是一款 Monad 测试网上的像素领地争夺游戏。玩家以递增价格夺取像素，前任持有者获得合约记录的回款，差额进入全局奖池。每次有效争夺刷新 180 秒倒计时，到期后任何人可结算：结算人先拿奖池 1% 作为结算补偿，剩余再按 80/20 分给最后争夺者和滚存。
 
 - 仓库：https://github.com/baikingrio/embergrid
-- 测试网合约：[`0x02C88408bd774503101803dC681793b14Ee5847a`](https://testnet.monadvision.com/address/0x02C88408bd774503101803dC681793b14Ee5847a)
+- 测试网合约：[`0x2ee2F6d3294e417D3e77F461CD6243351163791F`](https://testnet.monadvision.com/address/0x2ee2F6d3294e417D3e77F461CD6243351163791F)
 - 演示水龙头：[`0x81e72AF58Ac6Cf77902a7901eC83743C2c3248FB`](https://testnet.monadvision.com/address/0x81e72AF58Ac6Cf77902a7901eC83743C2c3248FB)
 - 首屏截图：[docs/submission/home.png](submission/home.png)
 - 公开演示：https://embergrid-zeta.vercel.app

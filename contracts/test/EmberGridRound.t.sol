@@ -86,8 +86,10 @@ contract EmberGridRoundTest is Test {
         grid.paint{value: 0.015625 ether}(0, 3);
 
         uint256 poolBefore = grid.prizePool();
-        uint256 winnerCredit = (poolBefore * 80) / 100;
-        uint256 rollover = poolBefore - winnerCredit;
+        uint256 settlerCredit = (poolBefore * 1) / 100;
+        uint256 remainder = poolBefore - settlerCredit;
+        uint256 winnerCredit = (remainder * 80) / 100;
+        uint256 rollover = remainder - winnerCredit;
 
         vm.prank(alice);
         grid.settleRound();
@@ -96,7 +98,7 @@ contract EmberGridRoundTest is Test {
         assertEq(grid.endTime(), 0);
         assertEq(grid.roundId(), 1);
         assertEq(grid.prizePool(), rollover);
-        assertEq(grid.pendingWithdrawals(alice), 0.0115 ether);
+        assertEq(grid.pendingWithdrawals(alice), 0.0115 ether + settlerCredit);
         assertEq(grid.pendingWithdrawals(bob), winnerCredit);
 
         (address owner, uint88 price, ) = grid.pixels(0);
@@ -319,6 +321,7 @@ contract EmberGridRoundTest is Test {
         grid.paint{value: 0.0125 ether}(50, 2);
 
         vm.warp(grid.endTime());
+        vm.prank(alice);
         grid.settleRound();
 
         uint256 pool = grid.prizePool();

@@ -363,8 +363,12 @@ export function useGridState() {
   const awaitingSettle = computed(() =>
     lastPainter.value !== zeroAddress && endTime.value > 0 && chainNow.value >= endTime.value,
   )
-  const winnerCredit = computed(() => (prizePool.value * 80n) / 100n)
-  const rollover = computed(() => prizePool.value - winnerCredit.value)
+  const settlerCredit = computed(() => (prizePool.value * 1n) / 100n)
+  const winnerCredit = computed(() => {
+    const remainder = prizePool.value - settlerCredit.value
+    return (remainder * 80n) / 100n
+  })
+  const rollover = computed(() => prizePool.value - settlerCredit.value - winnerCredit.value)
 
   return {
     colors,
@@ -376,6 +380,7 @@ export function useGridState() {
     chainNow,
     baseFee,
     awaitingSettle,
+    settlerCredit,
     winnerCredit,
     rollover,
     balance,
