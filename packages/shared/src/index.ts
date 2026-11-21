@@ -4,6 +4,7 @@ export {
   MONAD_TESTNET_RPC_URL,
   createMonadPublicClient,
   monadTestnet,
+  monadTransport,
 } from './monad'
 
 export {

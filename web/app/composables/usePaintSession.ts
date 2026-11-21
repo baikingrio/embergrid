@@ -1,12 +1,11 @@
 import {
   createWalletClient,
   formatEther,
-  http,
   zeroAddress,
   type Address,
   type Hex,
 } from 'viem'
-import { EMBERGRID_ADDRESS, createMonadPublicClient, monadTestnet } from '@embergrid/shared'
+import { EMBERGRID_ADDRESS, createMonadPublicClient, monadTestnet, monadTransport } from '@embergrid/shared'
 import { embergridAbi } from '~/lib/embergridAbi'
 
 export type PaintQuote = {
@@ -25,7 +24,7 @@ function explain(error: unknown, fallback: string) {
   if (text.includes('RoundAwaitingSettle')) return '本轮已到期，请先结算后再购买'
   if (text.includes('CannotBuyOwnPixel')) return '不能购买自己持有的像素'
   if (text.includes('IncorrectPayment')) return '价格已变化，请重新确认'
-  if (text.includes('NothingToWithdraw')) return '没有可领取余额'
+  if (text.includes('429') || text.includes('Rate limit')) return '公共节点繁忙，请稍后再点一次'
   return text || fallback
 }
 
@@ -57,7 +56,7 @@ export function usePaintSession() {
     return createWalletClient({
       account: account.value,
       chain: monadTestnet,
-      transport: http(config.public.monadRpcUrl),
+      transport: monadTransport(config.public.monadRpcUrl),
     })
   }
 

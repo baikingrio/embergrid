@@ -37,13 +37,17 @@ export function useGridState() {
   async function syncCanvas() {
     const nextColors = new Uint8Array(PIXEL_COUNT)
     const nextOwned = new Uint8Array(PIXEL_COUNT)
-    for (let start = 0; start < PIXEL_COUNT; start += PAGE) {
-      const [owners, , pageColors] = await publicClient.readContract({
+    const pages = await Promise.all(Array.from({ length: PIXEL_COUNT / PAGE }, (_, page) => {
+      const start = page * PAGE
+      return publicClient.readContract({
         address: EMBERGRID_ADDRESS,
         abi: embergridAbi,
         functionName: 'getPixels',
         args: [BigInt(start), BigInt(PAGE)],
-      })
+      }).then((result) => ({ start, result }))
+    }))
+    for (const { start, result } of pages) {
+      const [owners, , pageColors] = result
       for (let i = 0; i < PAGE; i++) {
         nextColors[start + i] = pageColors[i] ?? 0
         nextOwned[start + i] = owners[i] && owners[i] !== zeroAddress ? 1 : 0
@@ -139,7 +143,7 @@ export function useGridState() {
 
   let stopWatch: (() => void) | undefined
   let poll = 0
-  let roundPoll = 0
+  let canvasPoll = 0
 
   onMounted(async () => {
     await sync()
@@ -147,6 +151,7 @@ export function useGridState() {
       address: EMBERGRID_ADDRESS,
       abi: embergridAbi,
       eventName: 'Painted',
+      pollingInterval: 15_000,
       onLogs(logs) {
         for (const log of logs) {
           const id = Number(log.args.pixelId ?? 0n)
@@ -168,17 +173,17 @@ export function useGridState() {
       },
     })
     poll = window.setInterval(() => {
-      void sync().catch(() => {})
-    }, 12000)
-    roundPoll = window.setInterval(() => {
-      void syncRound().catch(() => {})
-    }, 4000)
+      void syncRound().then(() => syncAccount()).catch(() => {})
+    }, 15_000)
+    canvasPoll = window.setInterval(() => {
+      void syncCanvas().catch(() => {})
+    }, 60_000)
   })
 
   onScopeDispose(() => {
     stopWatch?.()
     if (poll) window.clearInterval(poll)
-    if (roundPoll) window.clearInterval(roundPoll)
+    if (canvasPoll) window.clearInterval(canvasPoll)
   })
 
   watch(() => account.value?.address, () => {
