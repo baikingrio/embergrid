@@ -9,6 +9,7 @@ import {
 import { EMBERGRID_ADDRESS, createMonadPublicClient, monadTestnet, monadTransport } from '@embergrid/shared'
 import { addBatchIds as includeBatchIds, batchPricesMatch, samePixelIds, staleBatchIds, toggleBatchId } from '~/lib/batchSelection'
 import { embergridAbi } from '~/lib/embergridAbi'
+import { PALETTE } from '~/lib/palette'
 import { createQuoteRequests } from '~/lib/quoteRequests'
 
 export type PaintQuote = {
@@ -40,6 +41,14 @@ export function usePaintSession() {
 
   const pixelId = ref(0)
   const color = ref(1)
+  watch(() => account.value?.address, (address) => {
+    if (!address) return
+    const saved = localStorage.getItem(`embergrid.paint-color.${address.toLowerCase()}`)
+    const index = saved === null ? NaN : Number(saved)
+    color.value = Number.isInteger(index) && index >= 0 && index < PALETTE.length
+      ? index
+      : Number.parseInt(address.slice(-8), 16) % PALETTE.length
+  }, { immediate: true })
   const quote = ref<PaintQuote | null>(null)
   const confirmedPrice = ref<bigint | null>(null)
   const confirmedPixelId = ref<number | null>(null)
@@ -174,6 +183,8 @@ export function usePaintSession() {
   }
 
   watch(color, (next) => {
+    const address = account.value?.address
+    if (address) localStorage.setItem(`embergrid.paint-color.${address.toLowerCase()}`, String(next))
     clearConfirmation()
     clearBatchConfirmation()
     if (quote.value) quote.value = { ...quote.value, color: next }

@@ -1,4 +1,4 @@
-# EmberGrid 余烬格
+# 领地争夺战
 
 Foundry contracts + Nuxt 4 frontend with shared Monad Testnet constants (`@embergrid/shared`). The project was previously named **Monad Place**.
 

@@ -2,6 +2,7 @@
 import { COLOR_NAMES, PALETTE } from '~/lib/palette'
 import { paintBudget } from '~/lib/paintBudget'
 import { zeroAddress } from 'viem'
+import { EMBERGRID_ADDRESS, MONAD_TESTNET_EXPLORER } from '@embergrid/shared'
 
 const wallet = useDemoWallet()
 const paint = usePaintSession()
@@ -11,20 +12,60 @@ const claiming = ref(false)
 const walletExpanded = shallowRef(false)
 const claimMessage = ref('')
 const batchDetailsOpen = ref(false)
+const pageShell = useTemplateRef<HTMLElement>('pageShell')
+const canvasFitSize = shallowRef<number | null>(null)
+let layoutObserver: ResizeObserver | undefined
+let fitFrame = 0
+
+function scheduleCanvasFit() {
+  cancelAnimationFrame(fitFrame)
+  fitFrame = requestAnimationFrame(() => {
+    const canvas = pageShell.value?.querySelector('.canvas-viewport')
+    const dock = pageShell.value?.querySelector('.action-dock')
+    if (!canvas || !dock) return
+    const top = canvas.getBoundingClientRect().top + window.scrollY
+    const height = window.visualViewport?.height ?? window.innerHeight
+    const available = Math.max(160, Math.floor(height - top - dock.getBoundingClientRect().height - 16))
+    if (canvasFitSize.value !== available) canvasFitSize.value = available
+  })
+}
 
 useHead({
-  title: 'EmberGrid 余烬格 · Monad 像素领地争夺',
+  title: '领地争夺战 · Monad 像素领地争夺',
   meta: [{ name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' }],
 })
+
+const colorPicker = useTemplateRef<HTMLDetailsElement>('colorPicker')
+
+function chooseColor(index: number) {
+  paint.color.value = index
+  if (colorPicker.value) {
+    colorPicker.value.open = false
+    colorPicker.value.querySelector('summary')?.focus()
+  }
+}
 
 let clock = 0
 onMounted(() => {
   clock = window.setInterval(() => {
     now.value = Date.now()
   }, 1000)
+  void nextTick(() => {
+    layoutObserver = new ResizeObserver(scheduleCanvasFit)
+    if (pageShell.value) layoutObserver.observe(pageShell.value)
+    const dock = pageShell.value?.querySelector('.action-dock')
+    if (dock) layoutObserver.observe(dock)
+    scheduleCanvasFit()
+  })
+  window.addEventListener('resize', scheduleCanvasFit)
+  window.visualViewport?.addEventListener('resize', scheduleCanvasFit)
 })
 onUnmounted(() => {
   if (clock) window.clearInterval(clock)
+  layoutObserver?.disconnect()
+  cancelAnimationFrame(fitFrame)
+  window.removeEventListener('resize', scheduleCanvasFit)
+  window.visualViewport?.removeEventListener('resize', scheduleCanvasFit)
 })
 
 const countdown = computed(() => {
@@ -93,6 +134,22 @@ const fundsNote = computed(() => {
   return `余额不够支付这一格和 Gas。可以先${claim}。`
 })
 
+const dockSummary = computed(() => {
+  if (grid.awaitingSettle.value) return ''
+  if (paint.batchIds.value.length > 0) {
+    if (paint.batchQuoting.value) return '正在读取批量报价…'
+    if (funds.value && funds.value.count > 1) {
+      return `合计支付 ${paint.formatEther(funds.value.payment)} MON · 余额 ${paint.formatEther(grid.balance.value)} · Gas 预算 ${paint.formatEther(funds.value.gas)}`
+    }
+    return '正在合计支付…'
+  }
+  if (grid.synced.value && paint.quote.value && paint.quote.value.pixelId === paint.pixelId.value) {
+    const gas = funds.value ? paint.formatEther(funds.value.gas) : '…'
+    return `合计支付 ${paint.formatEther(paint.quote.value.nextPrice)} MON · 余额 ${paint.formatEther(grid.balance.value)} · Gas 预算 ${gas}`
+  }
+  return '选择像素后确认金额'
+})
+
 function short(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`
 }
@@ -116,7 +173,7 @@ async function claim() {
 </script>
 
 <template>
-  <main class="game-shell">
+  <main ref="pageShell" class="game-shell" :style="{ '--canvas-fit-size': canvasFitSize ? `${canvasFitSize}px` : undefined }">
     <GameStatus
       :pool="grid.formatEther(grid.prizePool.value)"
       :countdown="countdown"
@@ -131,12 +188,7 @@ async function claim() {
         重试
       </button>
     </section>
-    <section v-if="wallet.ready.value && !wallet.acknowledged.value" class="wallet-notice">
-      <p>本机测试钱包：清除浏览器数据后，将无法再访问该地址里的测试币。</p>
-      <button class="mt-3 rounded bg-amber-800 px-3 py-1.5 text-white" type="button" @click="wallet.acknowledge()">
-        我知道了
-      </button>
-    </section>
+
 
     <div class="play-layout">
       <div class="canvas-column">
@@ -151,9 +203,16 @@ async function claim() {
           @select="selectPixel"
           @toggle-batch="paint.toggleBatch"
           @add-batch="paint.addBatchIds"
+          @clear-batch="paint.clearBatch"
           @stroke-end="paint.fetchBatchQuotes"
         />
-        <p id="canvas-help" class="mt-2 text-xs text-stone-500">点选一格开始；切换涂画可拖动多选。方向键也可选格，Shift 单击增删批量。</p>
+        <p id="canvas-help" class="mt-2 text-xs text-stone-500">点选一格开始；切换涂画可拖动多选。方向键也可选格，Shift 单击增删批量。画布上方可清空批量。</p>
+    <section v-if="wallet.ready.value && !wallet.acknowledged.value" class="wallet-notice">
+      <p>本机测试钱包：清除浏览器数据后，将无法再访问该地址里的测试币。</p>
+      <button class="mt-3 rounded bg-amber-800 px-3 py-1.5 text-white" type="button" @click="wallet.acknowledge()">
+        我知道了
+      </button>
+    </section>
       </div>
 
       <div class="control-column">
@@ -193,8 +252,14 @@ async function claim() {
         </section>
 
         <section class="selection-panel" aria-label="选色与购买">
-          <div class="section-heading"><h2>给领地上色</h2><span>{{ COLOR_NAMES[paint.color.value] }}</span></div>
-          <div class="color-palette">
+          <div class="section-heading"><h2>给领地上色</h2></div>
+          <details ref="colorPicker" class="color-picker">
+            <summary class="color-picker-trigger">
+              <span class="current-color" :style="{ background: PALETTE[paint.color.value] }" aria-hidden="true" />
+              <span class="brush-label">我的画笔<strong>{{ COLOR_NAMES[paint.color.value] }}</strong></span>
+              <span class="change-color">换颜色</span>
+            </summary>
+            <div class="color-palette">
             <button
               v-for="(swatch, index) in PALETTE"
               :key="swatch"
@@ -205,10 +270,13 @@ async function claim() {
               :aria-label="`颜色 ${COLOR_NAMES[index]}`"
               :aria-pressed="paint.color.value === index"
               :title="COLOR_NAMES[index]"
-              @click="paint.color.value = index"
+              @click="chooseColor(index)"
             />
-          </div>
-          <label class="pixel-field" for="pixel-number">
+            </div>
+          </details>
+          <details class="precision-tools">
+            <summary>精确定位</summary>
+            <label class="pixel-field" for="pixel-number">
             像素编号
             <input
               id="pixel-number"
@@ -219,7 +287,8 @@ async function claim() {
               :value="paint.pixelId.value"
               @change="onPixelInput"
             >
-          </label>
+            </label>
+          </details>
           <div v-if="paint.settleResult.value" class="mt-3 space-y-2 rounded border border-emerald-300 bg-emerald-50 p-3">
             <p class="font-semibold text-emerald-950">本轮已结算</p>
             <p>获胜者：{{ short(paint.settleResult.value.winner) }}</p>
@@ -253,8 +322,8 @@ async function claim() {
               <button class="rounded border px-3 py-1.5 disabled:opacity-40" type="button" :disabled="paint.inflight.value" @click="paint.toggleBatch(paint.pixelId.value)">
                 {{ paint.batchIds.value.includes(paint.pixelId.value) ? '移出当前像素' : '加入当前像素' }}
               </button>
-              <button class="rounded border px-3 py-1.5 disabled:opacity-40" type="button" :disabled="paint.batchIds.value.length === 0 || paint.inflight.value" @click="paint.clearBatch()">
-                清空
+              <button class="rounded border border-amber-800/30 bg-orange-50 px-3 py-1.5 text-amber-900 disabled:opacity-40" type="button" :disabled="paint.batchIds.value.length === 0 || paint.inflight.value" @click="paint.clearBatch()">
+                清空批量
               </button>
             </div>
             <button class="mt-2 underline" type="button" :disabled="paint.batchQuotes.value.length === 0" @click="batchDetailsOpen = !batchDetailsOpen">
@@ -283,63 +352,77 @@ async function claim() {
       </ul>
     </section>
 
+    <footer class="game-footer">
+      <NuxtLink to="/intro">项目介绍</NuxtLink>
+      <a :href="`${MONAD_TESTNET_EXPLORER}/address/${EMBERGRID_ADDRESS}`" target="_blank" rel="noreferrer">Monad 测试网合约 ↗</a>
+      <span>仅使用测试 MON</span>
+    </footer>
+
     <div class="action-dock">
       <div class="action-dock-inner">
-        <p aria-live="polite">{{ grid.awaitingSettle.value ? '本轮已到期。结算后才能继续购买。' : (paint.message.value || '选择像素后确认金额') }}</p>
-        <div v-if="grid.awaitingSettle.value">
-          <button class="rounded bg-amber-800 px-3 py-1.5 text-white disabled:opacity-40" type="button" :disabled="paint.inflight.value" @click="paint.settleRound()">
-            {{ paint.inflight.value ? '等待回执…' : '结算本轮' }}
-          </button>
-        </div>
-        <template v-else-if="paint.batchIds.value.length > 0">
-          <p>已选 {{ paint.batchIds.value.length }} / 64</p>
-          <p v-if="paint.batchQuoting.value" class="text-stone-500">正在读取批量报价…</p>
-          <p v-else-if="funds && funds.count > 1" class="font-semibold">
-            合计支付 {{ paint.formatEther(funds.payment) }} MON · 余额 {{ paint.formatEther(grid.balance.value) }} · Gas 预算 {{ paint.formatEther(funds.gas) }}
-          </p>
-          <p v-if="fundsNote && paint.batchIds.value.length > 0" class="funds-note">{{ fundsNote }}</p>
-          <p v-if="paint.batchIncludesMine.value" class="font-semibold text-amber-800">批量里包含你已持有的像素</p>
-          <div v-if="grid.synced.value && !grid.awaitingSettle.value" class="flex gap-2">
-            <button class="rounded border px-3 py-1.5 disabled:opacity-40" type="button" :disabled="paint.batchQuoting.value || paint.batchIncludesMine.value || paint.batchQuotes.value.length !== paint.batchIds.value.length || paint.batchQuotes.value.length === 0 || paint.inflight.value || funds?.short" @click="paint.confirmBatch()">
+        <details class="dock-details">
+          <summary>
+            <strong>{{ grid.awaitingSettle.value ? '等待结算' : funds ? `${paint.formatEther(funds.payment)} MON` : '等待报价' }}</strong>
+            <span>明细</span>
+          </summary>
+          <div class="dock-detail-content">
+            <p>{{ grid.awaitingSettle.value ? '本轮已到期。结算后才能继续购买。' : (paint.message.value || '选择像素后确认金额') }}</p>
+            <p v-if="paint.batchIds.value.length">已选 {{ paint.batchIds.value.length }} / 64 格</p>
+            <p>{{ dockSummary }}</p>
+            <p v-if="fundsNote">{{ fundsNote }}</p>
+            <p v-if="paint.batchIncludesMine.value">批量里包含你已持有的像素</p>
+          </div>
+        </details>
+        <div class="dock-actions flex gap-2">
+          <template v-if="grid.awaitingSettle.value">
+            <button class="rounded bg-amber-800 px-3 py-1.5 text-white disabled:opacity-40" type="button" :disabled="paint.inflight.value" @click="paint.settleRound()">
+              {{ paint.inflight.value ? '等待回执…' : '结算本轮' }}
+            </button>
+          </template>
+          <template v-else-if="paint.batchIds.value.length > 0">
+            <button class="rounded border px-3 py-1.5 disabled:opacity-40" type="button" :disabled="!grid.synced.value || paint.batchQuoting.value || paint.batchIncludesMine.value || paint.batchQuotes.value.length !== paint.batchIds.value.length || paint.batchQuotes.value.length === 0 || paint.inflight.value || funds?.short" @click="paint.confirmBatch()">
               确认批量金额
             </button>
             <button class="rounded bg-orange-700 px-3 py-1.5 text-white disabled:opacity-40" type="button" :disabled="!paint.batchReady.value || paint.batchIncludesMine.value || paint.inflight.value || funds?.short" @click="paint.sendBatch()">
               {{ paint.inflight.value ? '等待回执…' : '批量购买' }}
             </button>
-          </div>
-        </template>
-        <template v-else-if="grid.synced.value && paint.quote.value && paint.quote.value.pixelId === paint.pixelId.value && !grid.awaitingSettle.value">
-          <p>合计支付 {{ paint.formatEther(paint.quote.value.nextPrice) }} MON · 余额 {{ paint.formatEther(grid.balance.value) }} · Gas 预算 {{ funds ? paint.formatEther(funds.gas) : '…' }}</p>
-          <p v-if="fundsNote" class="funds-note">{{ fundsNote }}</p>
-          <div class="flex gap-2">
-            <button class="rounded border px-3 py-1.5 disabled:opacity-40" type="button" :disabled="paint.quoting.value || paint.heldByMe.value || paint.inflight.value || funds?.short" @click="paint.confirmQuote()">
+          </template>
+          <template v-else>
+            <button class="rounded border px-3 py-1.5 disabled:opacity-40" type="button" :disabled="!grid.synced.value || !paint.quote.value || paint.quote.value.pixelId !== paint.pixelId.value || paint.quoting.value || paint.heldByMe.value || paint.inflight.value || funds?.short" @click="paint.confirmQuote()">
               确认金额
             </button>
             <button class="rounded bg-orange-700 px-3 py-1.5 text-white disabled:opacity-40" type="button" :disabled="paint.quoting.value || paint.confirmedPrice.value === null || paint.confirmedPixelId.value !== paint.pixelId.value || paint.heldByMe.value || paint.inflight.value || funds?.short" @click="paint.sendPaint()">
               {{ paint.inflight.value ? '等待回执…' : '购买' }}
             </button>
-          </div>
-        </template>
+          </template>
+        </div>
+        <p v-if="fundsNote || paint.batchIncludesMine.value" class="dock-alert" role="status">{{ fundsNote ? '余额不足，请领取测试 MON 或缩小选区。' : '选区包含本人持有的像素，请移除后重试。' }}</p>
+        <p v-if="paint.inflight.value || paint.status.value === 'failed' || paint.status.value === 'confirmed'" class="dock-feedback" role="status" aria-live="polite">{{ paint.message.value }}</p>
       </div>
     </div>
   </main>
 </template>
 
 <style scoped>
-.game-shell { max-width: 1120px; margin: 0 auto; min-height: 100dvh; padding: 24px 24px calc(128px + env(safe-area-inset-bottom)); color: #29221e; font-size: 14px; }
-.action-dock { position: fixed; right: 0; bottom: 0; left: 0; z-index: 20; border-top: 1px solid #ded8d0; background: rgb(255 253 249 / 96%); padding: 12px 16px max(12px, env(safe-area-inset-bottom)); }
-.action-dock-inner { max-width: 1120px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+.game-shell { max-width: 1120px; margin: 0 auto; min-height: 100dvh; padding: 24px 24px calc(120px + env(safe-area-inset-bottom)); color: #29221e; font-size: 14px; }
+.action-dock { position: fixed; right: 0; bottom: 0; left: 0; z-index: 20; border-top: 1px solid #ded8d0; background: #fffdf9; padding: 8px 16px max(8px, env(safe-area-inset-bottom)); }
+.action-dock-inner { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; font-size: 13px; }
 .action-dock button { min-height: 44px; }
-.funds-note { color: #8a3d16; line-height: 1.5; }
+.dock-details > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; min-height: 44px; cursor: pointer; }
+.dock-details > summary::-webkit-details-marker { display: none; }
+.dock-details > summary strong { font-size: 17px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.dock-details > summary > span { color: #6b5c50; text-decoration: underline; text-underline-offset: 3px; font-size: 12px; }
+.dock-detail-content { position: absolute; bottom: calc(100% + 8px); left: max(12px, calc((100vw - 1120px) / 2)); width: min(480px, calc(100vw - 24px)); max-height: 45svh; overflow-y: auto; padding: 16px; border: 1px solid #ded8d0; border-radius: 12px; background: #fffdf9; color: #5f5147; overflow-wrap: anywhere; }
+.dock-detail-content p + p { margin-top: 10px; }
+.dock-actions { min-height: 44px; }
+.dock-actions button { font-size: 13px; padding: 8px 12px; }
+.dock-alert, .dock-feedback { grid-column: 1 / -1; margin: 0; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.dock-alert { color: #8a3d16; }
+.game-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 24px; margin-top: 24px; border-top: 1px solid #ded8d0; padding-top: 12px; color: #6b5c50; font-size: 12px; }
+.game-footer a { display: inline-flex; align-items: center; min-height: 44px; color: #765338; text-decoration: underline; text-underline-offset: 3px; }
 .batch-details { max-height: 12rem; margin-top: 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
 .play-layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(340px, 1fr); align-items: start; gap: 24px; margin-top: 12px; }
 .canvas-column, .control-column { min-width: 0; }
-@media (min-width: 761px) {
-  .canvas-column :deep(.canvas-viewport) {
-    width: min(100%, calc(100dvh - 300px));
-    max-height: calc(100dvh - 300px);
-  }
-}
 .control-column { display: flex; flex-direction: column; gap: 16px; }
 .section-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
 .section-heading h2 { font-size: 16px; font-weight: 700; }
@@ -358,6 +441,18 @@ async function claim() {
 .connection-error { padding: 16px; margin-bottom: 14px; background: #fff0eb; color: #913a22; border-radius: 10px; }
 .selection-panel { padding: 20px; border: 1px solid #ded8d0; background: #fff; border-radius: 14px; font-size: 13px; }
 .selection-panel button { min-height: 44px; }
+.color-picker { margin-bottom: 10px; }
+.color-picker-trigger { display: flex; align-items: center; gap: 12px; min-height: 64px; cursor: pointer; border-bottom: 1px solid #eee8df; padding: 0 0 14px; }
+.color-picker-trigger::-webkit-details-marker { display: none; }
+.current-color { width: 36px; height: 36px; flex-shrink: 0; border-radius: 8px; border: 1px solid #29221e30; }
+.brush-label { display: grid; gap: 2px; color: #6b5c50; font-size: 12px; }
+.brush-label strong { color: #29221e; font-size: 15px; font-weight: 600; }
+.change-color { margin-left: auto; color: #93401e; text-decoration: underline; text-underline-offset: 4px; font-size: 13px; }
+.color-picker[open] .color-palette { margin-top: 16px; }
+.color-picker-trigger:focus-visible, .precision-tools > summary:focus-visible { outline: 2px solid #8d421d; outline-offset: 3px; }
+.precision-tools { color: #6b5c50; font-size: 12px; margin-bottom: 14px; }
+.precision-tools > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; text-decoration: underline; text-underline-offset: 4px; }
+.precision-tools .pixel-field { margin-top: 8px; }
 .color-palette { display: grid; grid-template-columns: repeat(auto-fit, minmax(44px, 1fr)); gap: 7px; margin-bottom: 18px; }
 .color-swatch { min-width: 44px; height: 44px; border-radius: 7px; border: 3px solid #fff; box-shadow: inset 0 0 0 1px #29221e20; }
 .color-swatch.selected { outline: 2px solid #29221e; outline-offset: 0; }
@@ -374,7 +469,11 @@ async function claim() {
 .trade-feed li { padding: 10px 0; border-bottom: 1px solid #eee8df; flex-wrap: wrap; }
 .game-shell button:focus-visible, .game-shell input:focus-visible, .game-shell a:focus-visible { outline: 2px solid #8d421d; outline-offset: 3px; }
 @media (max-width: 760px) {
-  .game-shell { padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) calc(128px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+  .dock-actions button { font-size: 12px; padding: 8px 10px; }
+  .action-dock { padding-left: 12px; padding-right: 12px; }
+  .action-dock-inner { column-gap: 8px; }
+  .dock-details > summary strong { font-size: 15px; }
+  .game-shell { padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) calc(120px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
   .play-layout { display: flex; flex-direction: column; gap: 16px; margin-top: 8px; }
   .control-column { display: contents; }
   .canvas-column, .wallet-panel, .selection-panel { width: 100%; }

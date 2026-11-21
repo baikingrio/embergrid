@@ -1,6 +1,7 @@
 import { createPublicClient, createWalletClient, isAddress, type Hex } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { monadTestnet, monadTransport } from '@embergrid/shared'
+import { describeFaucetFailure } from '../utils/faucetFailure'
 
 const faucetAbi = [
   {
@@ -15,19 +16,6 @@ const faucetAbi = [
   { type: 'error', name: 'NotOwner', inputs: [] },
   { type: 'error', name: 'TransferFailed', inputs: [] },
 ] as const
-
-function revertName(error: unknown) {
-  let current: unknown = error
-  for (let depth = 0; current && depth < 8; depth += 1) {
-    if (typeof current !== 'object') return ''
-    const record = current as { data?: { errorName?: string }, message?: string, cause?: unknown }
-    if (record.data?.errorName) return record.data.errorName
-    if (record.message?.includes('Insufficient')) return 'Insufficient'
-    if (record.message?.includes('Cooldown')) return 'Cooldown'
-    current = record.cause
-  }
-  return ''
-}
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<{ address?: string }>(event)
@@ -49,6 +37,10 @@ export default defineEventHandler(async (event) => {
   const wallet = createWalletClient({ account, chain: monadTestnet, transport })
 
   try {
+    const balance = await publicClient.getBalance({ address: account.address })
+    if (balance === 0n) {
+      throw createError({ statusCode: 503, statusMessage: '水龙头服务的 Gas 余额不足，请联系维护者补充测试 MON' })
+    }
     const hash = await wallet.writeContract({
       address: faucet,
       abi: faucetAbi,
@@ -62,13 +54,6 @@ export default defineEventHandler(async (event) => {
     return { hash }
   } catch (error) {
     if (error && typeof error === 'object' && 'statusCode' in error) throw error
-    const name = revertName(error)
-    if (name === 'Cooldown') {
-      throw createError({ statusCode: 429, statusMessage: '24 小时内已经领过' })
-    }
-    if (name === 'Insufficient') {
-      throw createError({ statusCode: 503, statusMessage: '水龙头余额不足' })
-    }
-    throw createError({ statusCode: 500, statusMessage: '领取失败' })
+    throw createError(describeFaucetFailure(error))
   }
 })
